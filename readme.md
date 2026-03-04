@@ -1,4 +1,4 @@
-# 🎙️ Speech Emotion Recognition (SER) Core
+# 🎙️ Speech Emotion Recognition (SER)
 
 一个将**工程实用性**与**零基础教学**完美结合的语音情感识别（SER）开源库。
 
