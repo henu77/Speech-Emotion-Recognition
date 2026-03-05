@@ -44,10 +44,12 @@ print(f"检测到的情感是: {result['emotion']} (置信度: {result['confiden
 
 如果你是语音处理或深度学习的初学者，请按顺序查阅 `tutorials/` 目录下的 Notebook，它们将带你从零实现 SER 库的核心功能：
 
-* **Level 1: 基准与特征工程 (`01_baseline_ml.ipynb`)** - 使用 `librosa` 提取 MFCC 特征，并训练 SVM 模型。
-* **Level 1.5: 深度学习之桥 (`02_pytorch_bridge.ipynb`)** - 手写 PyTorch Dataset 和 DataLoader，跨越认知悬崖。
-* **Level 2: 图像化语音 (`03_cnn_spectrogram.ipynb`)** - 将音频转化为梅尔语谱图并使用 CNN 进行图像分类。
-* **Level 3: 捕捉时间信息 (`04_lstm_sequence.ipynb`)** - 引入 LSTM 网络处理音频的时间序列特性。
-* **Level 4: 预训练大模型 (`05_transformer_finetune.ipynb`)** - 使用 HuggingFace 微调 Wav2Vec2 / HuBERT 等 SOTA 模型。
-* **Level 5: 评估与模型去偏 (`06_evaluation_bias.ipynb`)** - 掌握留一法交叉验证 (LOSO) 与混淆矩阵解读。
-* **Level 6: 模型部署 (`07_gradio_deployment.ipynb`)** - 使用 Gradio 构建可互动的网页麦克风测试接口。
+* **【课程 0】语音数据与预处理（入门根基） (`00_audio_data_preprocess.ipynb`)** - 核心：音频格式统一、VAD 降噪、数据集分层划分。输出：`AudioPreprocessor` 批量预处理类。
+* **【课程 1】传统 ML 基线：SER 入门基准 (`01_ml_baseline_mfcc_svm.ipynb`)** - 核心：MFCC 手工特征、SVM / 随机森林训练、基础评估。输出：基线模型推理脚本。
+* **【课程 2】深度学习前置：PyTorch 工程基础 (`02_pytorch_data_pipeline.ipynb`)** - 核心：Dataset/DataLoader 封装、语音数据增强、通用训练模板。输出：`SERDataLoader` 与 `BaseTrainer` 通用类。
+* **【课程 3】CNN：语音视觉化建模 (`03_cnn_ser_spectrogram.ipynb`)** - 核心：梅尔语谱图、2D-CNN 情感分类、模型推理。输出：`CNNSERInferencer` 推理类。
+* **【课程 4】Transformer：时序情感建模 (`04_transformer_ser_temporal.ipynb`)** - 核心：注意力机制适配语音、轻量级 Transformer 训练。输出：Transformer SER 训练 / 推理脚本。
+* **【课程 5】SER 主流混合模型（工业级落地方案） (`05_ser_mainstream_hybrid_models.ipynb`)** - 核心：CNN-Transformer 混合模型、ECAPA-TDNN、TCN、模型选型对比。输出：主流模型统一训练 / 推理模板、性能对比表。
+* **【课程 6】预训练模型与微调（SOTA 方案） (`06_ser_pretrained_model_finetune.ipynb`)** - 核心：预训练模型选型及微调全流程验证。输出：预训练模型微调一键脚本。
+* **【课程 7】工程实践：解决实际场景数据偏差 (`07_ser_engineering_practice_bias.ipynb`)** - 核心：训练 / 工程数据分布偏移、数据 / 模型层解决方案、A/B 测试。输出：工程偏差分析工具。
+* **【课程 8】可视化交互（工具化落地） (`08_ser_visualization_interaction.ipynb`)** - 核心：结果可视化图表、交互式测试界面、教学可视化工具及轻量化部署。输出：可视化分析工具、交互式测试界面。
