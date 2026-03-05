@@ -1,0 +1,39 @@
+# 基本信息
+dataset_name: "template_dataset"
+num_classes: 0
+
+# 类别映射字典 (ID: 类别名称)
+# ID 必须从 0 开始连续整数
+class_mapping:
+  # 0: "Neutral"
+  # 1: "Happy"
+  # 2: "Sad"
+  # 3: "Angry"
+
+# 数据集划分文件列表 
+# 这里需要填写由预处理脚本生成的 json / jsonl 文件的绝对路径或相对路径
+# list 内部结构示例: [{"audio_path": "path.wav", "label": 0, "speaker_id": "01"}, ...]
+data_lists:
+  train: "path/to/your/metadata/train.jsonl"
+  val: "path/to/your/metadata/val.jsonl"
+  test: "path/to/your/metadata/test.jsonl"
+
+# 音频基础参数
+audio:
+  target_sr: 16000          # DataLoader 加载时强制转换的采样率
+  max_duration: 5.0         # 最大截断/填充时长 (秒)，不需要的话可以注释掉该配置
+
+# 数据增强
+# type 表示将在 base_dataset 的 transforms 构建器里匹配的类别名称
+transforms:
+  train:
+    # - type: "AddNoise"
+    #   snr: 10
+    # - type: "TimeMasking"
+  
+  val:
+    # 验证集一般不进行破坏性增强，仅作基础处理
+    # - type: "Normalize"
+
+  test:
+    # - type: "Normalize"
