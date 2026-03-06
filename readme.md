@@ -52,4 +52,53 @@ print(f"检测到的情感是: {result['emotion']} (置信度: {result['confiden
 * **【课程 5】SER 主流混合模型（工业级落地方案） (`05_ser_mainstream_hybrid_models.ipynb`)** - 核心：CNN-Transformer 混合模型、ECAPA-TDNN、TCN、模型选型对比。输出：主流模型统一训练 / 推理模板、性能对比表。
 * **【课程 6】预训练模型与微调（SOTA 方案） (`06_ser_pretrained_model_finetune.ipynb`)** - 核心：预训练模型选型及微调全流程验证。输出：预训练模型微调一键脚本。
 * **【课程 7】工程实践：解决实际场景数据偏差 (`07_ser_engineering_practice_bias.ipynb`)** - 核心：训练 / 工程数据分布偏移、数据 / 模型层解决方案、A/B 测试。输出：工程偏差分析工具。
-* **【课程 8】可视化交互（工具化落地） (`08_ser_visualization_interaction.ipynb`)** - 核心：结果可视化图表、交互式测试界面、教学可视化工具及轻量化部署。输出：可视化分析工具、交互式测试界面。
+* **【课程 8】可视化交互（工具化落地）** - 核心：搭建全流程可视化界面，包括数据采集，分析，处理，标注；模型训练，评估，推理。
+
+## 目录结构
+```text
+Speech-Emotion-Recognition/
+├── data
+│   ├── BAAI_Emotiontalk
+│   ├── CASIA
+│   ├── CREMA-D
+│   ├──...
+│   ├── casia_process.py
+│   └── readme.md
+├── pyproject.toml
+├── readme.md
+├── ser_lib
+│   ├── core
+│   │   ├── config.py
+│   │   └── exceptions.py
+│   ├── datasets
+│   │   ├── base_dataset.py
+│   │   ├── configs
+│   │   │   ├── casia
+│   │   │   │   ├── data_report.md
+│   │   │   │   ├── test.jsonl
+│   │   │   │   ├── train.jsonl
+│   │   │   │   └── val.jsonl
+│   │   │   └── casia.yaml
+│   │   └── template_dataset.yaml
+│   ├── engine
+│   │   ├── evaluator.py
+│   │   └── trainer.py
+│   ├── inference
+│   │   ├── offline.py
+│   │   └── streaming.py
+│   └── models
+│       ├── cnn_models.py
+│       └── rnn_models.py
+├── tests
+│   ├── test_inference.py
+│   └── test_mapping.py
+└── tutorials
+    ├── 00_audio_data_preprocess.ipynb
+    ├── 01_ml_baseline_mfcc_svm.ipynb
+    ├── 02_pytorch_data_pipeline.ipynb
+    ├── 03_cnn_ser_spectrogram.ipynb
+    ├── 04_transformer_ser_temporal.ipynb
+    ├── 05_ser_mainstream_hybrid_models.ipynb
+    ├── 06_ser_pretrained_model_finetune.ipynb
+    └── 07_ser_engineering_practice_bias.ipynb
+```text

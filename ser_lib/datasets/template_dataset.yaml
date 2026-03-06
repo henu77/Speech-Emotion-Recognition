@@ -1,0 +1,170 @@
+# =====================================================================
+# 语音情感识别 (SER) 全景数据集配置模板
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# 1. 基础元数据配置
+# ---------------------------------------------------------------------
+dataset_name: "template_dataset"
+num_classes: 4
+
+# 类别 ID 到名称的映射。注意: 深度学习中分类任务的 ID 必须从 0 开始连续编号。
+# 包含中英文版本，以便于 UI 展示和日志记录
+class_mapping:
+  0: 
+    en: "Neutral"
+    zh: "平静"
+  1: 
+    en: "Happy"
+    zh: "高兴"
+  2: 
+    en: "Sad"
+    zh: "悲伤"
+  3: 
+    en: "Angry"
+    zh: "愤怒"
+
+# ---------------------------------------------------------------------
+# 2. 路径与数据列表配置
+# ---------------------------------------------------------------------
+paths:
+  # json/jsonl 标注文件存放的根目录 (支持绝对路径或相对路径)
+  metadata_dir: "./data/template_dataset/metadata" 
+  
+  # [可选] 音频物理文件的根目录。如果 jsonl 中存的是相对路径(如 'wav/01.wav')，框架会自动拼接
+  data_root_dir: "./data/template_dataset/audio"
+
+data_lists:
+  train: "train.jsonl"
+  val: "val.jsonl"
+  test: "test.jsonl"
+
+audio:
+  # 数据集统一基准采样率。底层 torchaudio 加载时会自动将非此采样率的音频 Resample 到该值
+  target_sr: 16000 
+
+# ---------------------------------------------------------------------
+# 3. 批处理与序列对齐策略 (影响 DataLoader 的 collate_fn)
+# ---------------------------------------------------------------------
+audio_processing:
+  # strategy 可选项:
+  # - "truncate_pad": 截断过长音频，短音频补零。输出尺寸严格对齐。适用: 2D-CNN (课程3)
+  # - "dynamic_mask": 动态补齐到当前 Batch 最大长度，并返回 Attention Mask。适用: Transformer (课程4)
+  # - "sliding_window": 滑动窗口切片，返回展开特征片数以供投票。适用: 评估/推理阶对于变长音频处理 (高级)
+  strategy: "truncate_pad"  
+  
+  # ---------- 策略专属参数 (将根据 strategy 自动挑选) ----------
+  
+  # [truncate_pad 专用参数]
+  # 强制对齐的时间步(帧)长度。(以 16kHz, hop=256 为例，300帧约等于 4.8秒音频)
+  max_frames: 300          
+  
+  # [sliding_window 专用参数]
+  window_size: 300         # 窗口长度 (步数/帧数)
+  stride: 150              # 滑动步长 (设置150代表50%重叠率)
+
+# ---------------------------------------------------------------------
+# 4. 声学特征提取配置 (字典架构：支持同时开启多个特征提取流水线)
+# ---------------------------------------------------------------------
+features:
+  # 【选项 A】原始波形 (预留给课程6的 Wav2Vec2.0 等自监督预训练大模型)
+  # raw_waveform:
+  #   type: "Raw"
+
+  # 【选项 B】基础线性频谱图 (STFT)
+  # spectrogram:
+  #   type: "Spectrogram"
+  #   n_fft: 1024         # 傅里叶变换窗口大小，决定频率分辨率
+  #   win_length: 1024    # 实际窗口长度
+  #   hop_length: 256     # 步长，决定时间分辨率。越小，时间轴特征越长
+  #   power: 2.0          # 2.0 表示功率谱，1.0 表示幅度谱
+  #   window_fn: "hann_window" 
+
+  # 【选项 C】对数梅尔频谱图 (最常用的核心特征, 课程3/4标配)
+  log_mel:
+    type: "LogMelSpectrogram"
+    sample_rate: 16000
+    n_fft: 1024
+    hop_length: 256
+    n_mels: 80          # 梅尔滤波器数量，即特征图的 Y 轴高度 (常见值: 40, 64, 80, 128)
+    f_min: 0.0          # 最低有效频率
+    f_max: 8000.0       # 最高有效频率 (通常不超过奈奎斯特频率 target_sr/2)
+    power: 2.0
+    top_db: 80.0        # 动态范围压缩阈值，用于截断极小底噪 (分贝值)
+
+  # 【选项 D】梅尔频率倒谱系数 (课程1/5传统与混合模型备用)
+  # mfcc:
+  #   type: "MFCC"
+  #   sample_rate: 16000
+  #   n_mfcc: 40          # 保留的低阶倒谱系数个数
+  #   dct_type: 2         # DCT 变换类型，2 为标准型
+  #   log_mels: true      # 设为 true 表示在对数梅尔谱的基础上计算 MFCC
+  #   melkwargs:          # 内部计算 Mel 谱的必要参数
+  #     n_fft: 1024
+  #     hop_length: 256
+  #     n_mels: 80
+
+# ---------------------------------------------------------------------
+# 5. 数据增强流水线 (三级增强架构)
+# ---------------------------------------------------------------------
+transforms:
+  # 【第一级】波形级增强 (时域 1D，操作原始音频) - 物理意义明确
+  waveform_level:
+    train:
+      # - type: "Normalize"             # 零均值方差归一化
+      # - type: "AddGaussianNoise"      # 加入高斯白噪声
+      #   snr: 15.0                     # 目标信噪比 (dB)
+      #   p: 0.5
+      # - type: "PitchShift"            # 音高偏移 (模拟愤怒的高音或悲伤的低沉)
+      #   n_steps: 4
+      #   p: 0.5
+      # - type: "TimeStretch"           # 时间拉伸 (调整语速，不变调)
+      #   rate: 1.2
+      #   p: 0.5
+      # - type: "TimeShift"             # 时间平移截断对齐
+      #   shift_max_ratio: 0.2
+      #   p: 0.5
+      # - type: "VolumeScale"           # 音量按比例缩放
+      #   gain_min: 0.5
+      #   gain_max: 1.5
+      #   p: 0.5
+    val:
+      # - type: "Normalize"
+    test:
+      # - type: "Normalize"
+
+  # 【高级预留】波形级环境鲁棒性增强 - 预留给【课程7】
+  advanced_waveform_level:
+    train:
+      # - type: "RIR_Simulation"        # 房间脉冲响应混响模拟
+      #   rir_path: "./data/rir_room.wav"
+      #   p: 0.5
+      # - type: "DynamicSNRMixing"      # 真实环境底噪动态混合
+      #   noise_dataset_path: "./data/musan"
+      #   p: 0.5
+
+  # 【第二级】频谱级增强 (频域 2D，操作声学图像特征如 Log-Mel) - SOTA标配
+  spectrogram_level:
+    train:
+      - type: "SpecMasking"             # 原生 SpecAugment 时间+频率复合掩盖
+        time_mask_param: 30             # 沿时间轴随机遮挡连续帧最大数
+        freq_mask_param: 15             # 沿频率轴随机遮挡连续频带最大数
+        p: 0.5
+      # - type: "FilterAugment"         # 频带能量增益随机放缩
+      #   n_band: 1
+      #   db_range: [-5.0, 5.0]
+      #   band_width_ratio: 0.2
+      #   p: 0.5
+      # - type: "VTLP"                  # 声道长度扰动频域变形 (模拟声带生理特征)
+      #   warp_factor_range: [0.9, 1.1]
+      #   p: 0.5
+    val:
+    test:
+
+  # 【第三级】批处理级增强 (作用于 Batch 维度，特征与标签同时混合) - 预留给【课程7】
+  batch_level:
+    train:
+      # - type: "Mixup"
+      #   alpha: 0.2           # Beta 分布参数
+      # - type: "SpecMix"      # 【课程7进阶】同尺寸重叠特征随机块替换插值混合
+      #   p: 0.5
