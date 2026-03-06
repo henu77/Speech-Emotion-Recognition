@@ -44,9 +44,42 @@ audio:
   target_sr: 16000 
 
 # ---------------------------------------------------------------------
-# 3. 批处理与序列对齐策略 (影响 DataLoader 的 collate_fn)
-# ---------------------------------------------------------------------
-audio_processing:
+  # ---------------------------------------------------------------------
+  # 【Dataset.__getitem__ 与 DataLoader 输出格式详细规范】
+  #
+  # 阶段 1: BaseConfigDataset.__getitem__(idx) 单样本特征维度输出
+  #   - 输入音频会被强制转换为单声道 (Channel=1)
+  #   - 对所有的 2D 频谱类特征（如 log_mel, mfcc 等）：
+  #     * 提取器输出一般为 [C=1, Freq, Time]，经过 squeeze(0) 后，
+  #     * __getitem__ 返回特征维度为: [Freq, Time]
+  #   - 对所有的 1D 序列类特征（如 RMS, ZCR, F0, 谱质心等）：
+  #     * 提取器输出一般为 [B=1, Time]，经过 squeeze(0) 后，
+  #     * __getitem__ 返回特征维度为: [Time]  (一维张量)
+  #   - 对于 0D 标量联合特征（如 JitterShimmerHNR）：
+  #     * __getitem__ 返回特征维度为: [3] (形如 [Jitter, Shimmer, HNR])
+  #
+  # 阶段 2: 经过 collate_fn 聚合后，提供给用户最终网络的 Batch 格式有三种形态：
+  #
+  #   1. strategy: "truncate_pad" (默认 2D CNN 适配)
+  #      - 返回: ( Inputs_Dict, Labels )
+  #      - 若为 2D 频谱特征, Inputs_Dict['x']['feat_name'] 形状: [Batch, Channel=1, Y_Freq, X_Time]
+  #      - 若为 1D 序列特征, 形状: [Batch, 1, X_Time] （注: 代码内部一律 unsqueeze(1) 增加通道）
+  #      - Labels 形状: [Batch]
+  #
+  #   2. strategy: "dynamic_mask" (Transformer / RNN 序列适配)
+  #      - 返回: ( Inputs_Dict, Labels )
+  #      - 若为 2D 频谱特征, Inputs_Dict['x']['feat_name'] 形状: [Batch, Max_Time, Feature_Dim_Freq]  (注意维度换位)
+  #      - 若为 1D 序列特征, 缺少 Feature_Dim，形状依然可能为 [Batch, Max_Time]，这在 Transformer 中需要额外 Unsqueeze 适配。
+  #      - Inputs_Dict['mask'] 形状: [Batch, Max_Time]  (True为有效帧，False为Pad)
+  #      - Labels 形状: [Batch]
+  #
+  #   3. strategy: "sliding_window" (推理/评估期 切片表决机制)
+  #      - 返回: ( Inputs_Dict, Labels_Expanded )  *注意此处 Labels 被扩展*
+  #      - Inputs_Dict['x']['feat_name'] 形状: [Total_Windows, Channel=1, Y_Freq, Window_Size]
+  #      - Inputs_Dict['window_counts'] 形状: [Batch] (记录每个原音频裂变了多少切片)
+  #      - Inputs_Dict['original_labels'] 形状: [Batch] (原音频真实标签)
+  # ---------------------------------------------------------------------
+
   # strategy 可选项:
   # - "truncate_pad": 截断过长音频，短音频补零。输出尺寸严格对齐。适用: 2D-CNN (课程3)
   # - "dynamic_mask": 动态补齐到当前 Batch 最大长度，并返回 Attention Mask。适用: Transformer (课程4)
@@ -64,45 +97,64 @@ audio_processing:
   stride: 150              # 滑动步长 (设置150代表50%重叠率)
 
 # ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # 4. 声学特征提取配置 (字典架构：支持同时开启多个特征提取流水线)
+# 针对不同的域有专门的加载器处理。
 # ---------------------------------------------------------------------
 features:
-  # 【选项 A】原始波形 (预留给课程6的 Wav2Vec2.0 等自监督预训练大模型)
-  # raw_waveform:
-  #   type: "Raw"
+  
+  # -------------------------------------------------------------------
+  # 【波形特征】 (交由 WaveformLoader)
+  # -------------------------------------------------------------------
+  waveform:
+    # 原始波形 (预留给课程6的 Wav2Vec2.0 等自监督预训练大模型)
+    # raw_waveform:
+    #   type: "Raw"
 
-  # 【选项 B】基础线性频谱图 (STFT)
-  # spectrogram:
-  #   type: "Spectrogram"
-  #   n_fft: 1024         # 傅里叶变换窗口大小，决定频率分辨率
-  #   win_length: 1024    # 实际窗口长度
-  #   hop_length: 256     # 步长，决定时间分辨率。越小，时间轴特征越长
-  #   power: 2.0          # 2.0 表示功率谱，1.0 表示幅度谱
-  #   window_fn: "hann_window" 
+  # -------------------------------------------------------------------
+  # 【时域特征 / 波形级基础属性】 (交由 TimeDomainFeatureLoader)
+  # -------------------------------------------------------------------
+  time_domain:
+    # f0:
+    #   type: "F0"
+    # rms:
+    #   type: "RMS"
+    # zcr:
+    #   type: "ZCR"
 
-  # 【选项 C】对数梅尔频谱图 (最常用的核心特征, 课程3/4标配)
-  log_mel:
-    type: "LogMelSpectrogram"
-    sample_rate: 16000
-    n_fft: 1024
-    hop_length: 256
-    n_mels: 80          # 梅尔滤波器数量，即特征图的 Y 轴高度 (常见值: 40, 64, 80, 128)
-    f_min: 0.0          # 最低有效频率
-    f_max: 8000.0       # 最高有效频率 (通常不超过奈奎斯特频率 target_sr/2)
-    power: 2.0
-    top_db: 80.0        # 动态范围压缩阈值，用于截断极小底噪 (分贝值)
+  # -------------------------------------------------------------------
+  # 【频域特征 / 2D时频谱】 (交由 FreqDomainFeatureLoader，且自动接受频谱级增强)
+  # -------------------------------------------------------------------
+  freq_domain:
+    # 对数梅尔频谱图 (最常用的核心特征, 课程3/4标配)
+    log_mel:
+      type: "LogMelSpectrogram"
+      sample_rate: 16000
+      n_fft: 1024
+      hop_length: 256
+      n_mels: 80          # 梅尔滤波器数量，即特征图的 Y 轴高度 (常见值: 40, 64, 80, 128)
+      f_min: 0.0          # 最低有效频率
+      f_max: 8000.0       # 最高有效频率 (通常不超过奈奎斯特频率 target_sr/2)
+      power: 2.0
+      top_db: 80.0        # 动态范围压缩阈值，用于截断极小底噪 (分贝值)
 
-  # 【选项 D】梅尔频率倒谱系数 (课程1/5传统与混合模型备用)
-  # mfcc:
-  #   type: "MFCC"
-  #   sample_rate: 16000
-  #   n_mfcc: 40          # 保留的低阶倒谱系数个数
-  #   dct_type: 2         # DCT 变换类型，2 为标准型
-  #   log_mels: true      # 设为 true 表示在对数梅尔谱的基础上计算 MFCC
-  #   melkwargs:          # 内部计算 Mel 谱的必要参数
-  #     n_fft: 1024
-  #     hop_length: 256
-  #     n_mels: 80
+    # 梅尔频率倒谱系数 (课程1/5传统与混合模型备用)
+    # mfcc:
+    #   type: "MFCC"
+    #   sample_rate: 16000
+    #   n_mfcc: 40          # 保留的低阶倒谱系数个数
+    #   dct_type: 2         # DCT 变换类型，2 为标准型
+    #   log_mels: true      # 设为 true 表示在对数梅尔谱的基础上计算 MFCC
+    #   melkwargs:          # 内部计算 Mel 谱的必要参数
+    #     n_fft: 1024
+    #     hop_length: 256
+    #     n_mels: 80
+
+  # -------------------------------------------------------------------
+  # 【高级自定义特征】 (交由 CustomFeatureLoader 预留口)
+  # -------------------------------------------------------------------
+  custom:
+    # (此处预留诸如提取外部特征等配置)
 
 # ---------------------------------------------------------------------
 # 5. 数据增强流水线 (三级增强架构)

@@ -162,35 +162,3 @@ class DynamicSNRMixing(torch.nn.Module):
         raise NotImplementedError("【课程 7 进阶要求】动态真实背景混合需要外部 MUSAN 噪声数据库支撑，请各位自行下载并在此使用文件 IO 加载与音频信噪比例重组！")
 
 
-def build_time_domain_transforms(transforms_cfg: list, sample_rate: int) -> torch.nn.Module:
-    """根据配置字典数组实例化指定的波形增强变换为整体流水线 Module。"""
-    if not transforms_cfg:
-        return torch.nn.Identity()
-
-    pipeline = []
-    for cfg in transforms_cfg:
-        t_type = cfg.get('type')
-        p = cfg.get('p', 0.5)
-        
-        if t_type == "Normalize":
-            # 无参即时归一化算子
-            class Normalize(torch.nn.Module):
-                def forward(self, w): return (w - w.mean()) / (w.std() + 1e-8)
-            pipeline.append(Normalize())
-            
-        elif t_type == "AddGaussianNoise":
-            pipeline.append(AddGaussianNoise(snr=cfg.get('snr', 15.0), p=p))
-        elif t_type == "PitchShift":
-            pipeline.append(PitchShift(sample_rate=sample_rate, n_steps=cfg.get('n_steps', 4), p=p))
-        elif t_type == "TimeStretch":
-            pipeline.append(TimeStretch(rate=cfg.get('rate', 1.2), p=p))
-        elif t_type == "TimeShift":
-            pipeline.append(TimeShift(shift_max_ratio=cfg.get('shift_max_ratio', 0.2), p=p))
-        elif t_type == "VolumeScale":
-            pipeline.append(VolumeScale(gain_min=cfg.get('gain_min', 0.5), gain_max=cfg.get('gain_max', 1.5), p=p))
-        elif t_type == "RIR_Simulation":
-            pipeline.append(RIRSimulation(rir_path=cfg.get('rir_path', None), p=p))
-        elif t_type == "DynamicSNRMixing":
-            pipeline.append(DynamicSNRMixing(noise_dataset_path=cfg.get('noise_dataset_path', None), p=p))
-            
-    return torch.nn.Sequential(*pipeline)

@@ -109,35 +109,3 @@ class SpecMix(torch.nn.Module):
         )
 
 
-def build_freq_domain_transforms(transforms_cfg: list) -> torch.nn.Module:
-    """根据配置字典实例化频域变换数组为整体流水线 Module。"""
-    if not transforms_cfg:
-        return torch.nn.Identity()
-
-    pipeline = []
-    for cfg in transforms_cfg:
-        t_type = cfg.get('type')
-        p = cfg.get('p', 0.5)
-        
-        if t_type == "SpecMasking":
-            pipeline.append(SpecMasking(
-                time_mask_param=cfg.get('time_mask_param', 30), 
-                freq_mask_param=cfg.get('freq_mask_param', 15), 
-                p=p
-            ))
-        elif t_type == "FilterAugment":
-            pipeline.append(FilterAugment(
-                n_band=cfg.get('n_band', 1),
-                db_range=tuple(cfg.get('db_range', [-5.0, 5.0])),
-                band_width_ratio=cfg.get('band_width_ratio', 0.2),
-                p=p
-            ))
-        elif t_type == "VTLP":
-            pipeline.append(VTLP(
-                warp_factor_range=tuple(cfg.get('warp_factor_range', [0.9, 1.1])),
-                p=p
-            ))
-        elif t_type == "SpecMix":
-            pipeline.append(SpecMix(p=p))
-            
-    return torch.nn.Sequential(*pipeline)

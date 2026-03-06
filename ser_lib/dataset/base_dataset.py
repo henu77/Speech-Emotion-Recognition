@@ -7,8 +7,11 @@ from torch.utils.data import Dataset
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Callable, Optional
 
-from ser_lib.datasets.augment.time_domain import build_time_domain_transforms
-from ser_lib.datasets.augment.freq_domain import build_freq_domain_transforms
+from ser_lib.dataset.augment.builder import build_time_domain_transforms
+from ser_lib.dataset.loaders.waveform_loader import WaveformLoader
+from ser_lib.dataset.loaders.time_domain_loader import TimeDomainFeatureLoader
+from ser_lib.dataset.loaders.freq_domain_loader import FreqDomainFeatureLoader
+from ser_lib.dataset.loaders.custom_feature_loader import CustomFeatureLoader
 
 class BaseConfigDataset(Dataset):
     """配置驱动的语音情感识别 (SER) 数据集核心引擎。
@@ -63,13 +66,22 @@ class BaseConfigDataset(Dataset):
             transforms_cfg.get('advanced_waveform_level', {}).get(split, []), 
             sample_rate=self.target_sr
         )
-        # 2.3 频谱级增强 (课程3/4)
-        self.spec_transform = build_freq_domain_transforms(
+        # 2.3 实例化各域特征提取加载器
+        features_cfg = self.config.get('features', {})
+        
+        self.waveform_loader = WaveformLoader(
+            features_cfg.get('waveform', {})
+        )
+        self.time_loader = TimeDomainFeatureLoader(
+            features_cfg.get('time_domain', {})
+        )
+        self.freq_loader = FreqDomainFeatureLoader(
+            features_cfg.get('freq_domain', {}),
             transforms_cfg.get('spectrogram_level', {}).get(split, [])
         )
-
-        # 3. 动态构建多模态声学特征提取器字典
-        self.feature_extractors = self._build_feature_extractors()
+        self.custom_loader = CustomFeatureLoader(
+            features_cfg.get('custom', {})
+        )
 
     def _load_config(self, config_path: str) -> dict:
         """加载并解析 YAML 配置文件。"""
@@ -91,48 +103,7 @@ class BaseConfigDataset(Dataset):
             else:
                 raise ValueError(f"不支持的数据格式: {path.suffix}. 仅支持 .json 或 .jsonl")
 
-    def _load_config(self, config_path: str) -> dict:
 
-    def _build_feature_extractors(self) -> torch.nn.ModuleDict:
-        """根据配置字典，实例化对应的 torchaudio 特征提取模块。"""
-        extractors = torch.nn.ModuleDict()
-        features_cfg = self.config.get('features', {})
-        
-        for feat_name, cfg in features_cfg.items():
-            feat_type = cfg.get('type')
-            
-            # 反射解析窗函数对象
-            window_fn = torch.hann_window if cfg.get('window_fn') == 'hann_window' else None
-            
-            if feat_type == "Spectrogram":
-                extractors[feat_name] = T.Spectrogram(
-                    n_fft=cfg.get('n_fft', 400), hop_length=cfg.get('hop_length'), 
-                    power=cfg.get('power', 2.0), window_fn=window_fn
-                )
-            elif feat_type == "LogMelSpectrogram":
-                stype = 'power' if cfg.get('power', 2.0) == 2.0 else 'magnitude'
-                extractors[feat_name] = torch.nn.Sequential(
-                    T.MelSpectrogram(
-                        sample_rate=cfg.get('sample_rate', self.target_sr),
-                        n_fft=cfg.get('n_fft', 400), hop_length=cfg.get('hop_length'), 
-                        n_mels=cfg.get('n_mels', 80), power=cfg.get('power', 2.0), 
-                        window_fn=window_fn
-                    ),
-                    T.AmplitudeToDB(stype=stype, top_db=cfg.get('top_db', 80.0))
-                )
-            elif feat_type == "MFCC":
-                melkwargs = cfg.get('melkwargs', {})
-                if melkwargs.get('window_fn') == 'hann_window': 
-                    melkwargs['window_fn'] = torch.hann_window
-                extractors[feat_name] = T.MFCC(
-                    sample_rate=cfg.get('sample_rate', self.target_sr), 
-                    n_mfcc=cfg.get('n_mfcc', 40), dct_type=cfg.get('dct_type', 2), 
-                    log_mels=cfg.get('log_mels', True), melkwargs=melkwargs
-                )
-            elif feat_type == "Raw":
-                extractors[feat_name] = torch.nn.Identity()
-                
-        return extractors
 
     def __len__(self) -> int:
         return len(self.data_list)
@@ -177,19 +148,16 @@ class BaseConfigDataset(Dataset):
         if self.adv_wave_transform:
             waveform = self.adv_wave_transform(waveform)
             
-        # 3. 动态特征提取与频谱级增强 (SpecAugment)
+        # 3. 分发给专门的域特征加载器 (由加载器内部处理 2D 频谱增强和维度整理)
         extracted_features = {}
-        if len(self.feature_extractors) == 0:
+        extracted_features.update(self.waveform_loader(waveform))
+        extracted_features.update(self.time_loader(waveform))
+        extracted_features.update(self.freq_loader(waveform))
+        extracted_features.update(self.custom_loader(waveform))
+        
+        # 若所有配置均为空，保底返回原始波形
+        if not extracted_features:
             extracted_features['raw_waveform'] = waveform.squeeze(0)
-        else:
-            for feat_name, extractor in self.feature_extractors.items():
-                feat = extractor(waveform)
-                
-                # 仅当特征为 2D 且配置了 SpecAugment 时执行掩码操作
-                if not isinstance(extractor, torch.nn.Identity) and self.spec_transform:
-                    feat = self.spec_transform(feat)
-                    
-                extracted_features[feat_name] = feat.squeeze(0) 
 
         # 4. 获取序列有效长度 (以字典中首个特征的时间维度为准)
         seq_length = list(extracted_features.values())[0].shape[-1]

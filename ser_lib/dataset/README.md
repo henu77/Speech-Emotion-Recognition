@@ -5,37 +5,20 @@
 ## 目录结构
 
 ```text
-ser_lib/datasets/
+ser_lib/dataset/
 ├── base_dataset.py       # 核心配置驱动的数据集类 (`BaseConfigDataset`)
 ├── collate.py            # 长度重组对齐与批处理闭包构建工厂 (`build_collate_fn`)
 ├── template_dataset.yaml # 标杆型 YAML 配置模板，控制从采样率、特征提取到策略映射的所有底层变量
 ├── augment/              # 数据增强核心算子包
+│   ├── builder.py        # 增强流水线构建工厂
 │   ├── time_domain.py    # 1D 波形信号变换模块 (加噪, 音高, 推移, 混响)
 │   └── freq_domain.py    # 2D 频谱增强模块 (掩盖, 滤波, 变形等 SOTA 策略)
+├── features/             # 声学特征提取核心包
+│   ├── builder.py        # 特征提取构建工厂
+│   ├── time_domain.py    # 1D 核心时域韵律及音质特征 (F0, RMS, ZCR, Jitter/Shimmer 等)
+│   └── freq_domain.py    # 2D 频谱及高阶动态特征 (MFCC, 谱质心, 滚降, 平坦度等)
 └── README.md             # 架构文档及 API 规范说明（本文档）
 ```
-
----
-
-## `augment/time_domain.py`
-针对 1D `Waveform` 浮点数张量进行物理信号层面的扰乱操作。包含的类：
-
-- `AddGaussianNoise(snr, p)`: 注入受控信噪比的高斯白噪，增强对低信噪比环境的鲁棒性。
-- `PitchShift(sample_rate, n_steps, p)`: 进行音高偏移（支持 Torchaudio 内置特征，降级使用重采样），模拟说话人情感张力波动。
-- `TimeStretch(rate, p)`: 使用相位声码器支持的时间拉伸（不变调），模拟不同语速。
-- `TimeShift(shift_max_ratio, p)`: 时间轴上的伪平移截断对齐补零机制。
-- `VolumeScale(gain_min, gain_max, p)`: 音量按随机倍率浮动缩放。
-- *(预留)* `RIRSimulation` 和 `DynamicSNRMixing`: 待学生实现的高级环境混响与背景混合类。
-
----
-
-## `augment/freq_domain.py`
-针对经过 STFT 或 Mels 提取的 2D `Spectrogram` 进行掩码或线性矩阵操作。包含的类：
-
-- `SpecMasking(time_mask_param, freq_mask_param, p)`: 原生 SpecAugment，横纵抹零正则化。
-- `FilterAugment(n_band, db_range, band_width_ratio, p)`: 频段截断掩盖的柔和版本，给某频带加减 DB 能量而不是设 0。
-- `VTLP(warp_factor_range, p)`: 声道长度扰动，利用 `F.interpolate` 在频谱的频率轴作重采样拉伸模拟发音人生理结构的变异。
-- *(预留)* `SpecMix(p)`: 待学生与 DataLoader 批次对齐配合的切割混合增强策略。
 
 ---
 
@@ -58,9 +41,9 @@ ser_lib/datasets/
       # ...
   }
   ```
-- `wave_transform` (`Optional[Callable]`): 基于函数的波形级增强流程（第1级增强，来自 `time_domain.py`）。
-- `adv_wave_transform` (`Optional[Callable]`): 保留给复杂噪声注入操作的波形增强接口（第1高级增强，来自 `time_domain.py`）。
-- `spec_transform` (`Optional[torch.nn.Module]`): `torchaudio.transforms` 实现的频谱增强容器（如 SpecAugment，第2级增强，来自 `freq_domain.py`）。
+- `wave_transform` (`Optional[Callable]`): 基于函数的波形级增强流程（第1级增强，来自 `augment/time_domain.py`）。
+- `adv_wave_transform` (`Optional[Callable]`): 保留给复杂噪声注入操作的波形增强接口（第1高级增强，来自 `augment/time_domain.py`）。
+- `spec_transform` (`Optional[torch.nn.Module]`): `torchaudio.transforms` 实现的频谱增强容器（如 SpecAugment，第2级增强，来自 `augment/freq_domain.py`）。
 - `feature_extractors` (`torch.nn.ModuleDict`): 核心特征提取器映射字典，能够根据配置文件反射组装多种类型的提取管线。
   
 ### 核心方法 (Methods)
@@ -70,7 +53,7 @@ ser_lib/datasets/
 - **输入**:
   - `config_path` (`str`): `yaml` 配置文件的物理绝对或相对路径。
   - `split` (`str`): 取值限定为 `'train'`, `'val'`, 甚至 `'test'`。
-- **业务逻辑**: 载入对应 `split` 下的 `json/jsonl` 表单，使用 `augment` 包内的构建器初始化所有的增广流水和 `feature_extractors` 对象。
+- **业务逻辑**: 载入对应 `split` 下的 `json/jsonl` 表单，使用 `augment` 和 `features` 包内的构建器初始化所有的增广流水和 `feature_extractors` 对象。
 
 #### `_load_data_list(self, list_path: str) -> List[dict]`
 - **输入**: 数据清单文件路径 `list_path`。
@@ -86,7 +69,7 @@ ser_lib/datasets/
 
 #### `__getitem__(self, idx: int) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, int]`
 单点样本拉取总控。
-- **业务逻辑**: 触发指针对长音频的 OOM 级懒加载读取与重采样 -> 单声道融合 -> 波形增强 (`wave_transform`) -> 触发多特征并发提取及频谱级增强掩码 (`spec_transform`) -> 计算出最终产物有效长度。
+- **业务逻辑**: 触发指针对长音频的 OOM 级懒加载读取与重采样 -> 单声道融合 -> 波形增强 (`wave_transform`) -> 触发多模态特征并发提取 (`feature_extractors`) 及频谱级增强掩码 (`spec_transform`) -> 计算出最终产物有效长度。
 - **输出**: 包含三元素元组：
   - `extracted_features` (`Dict[str, torch.Tensor]`): 该样本提取出的特征包裹字典。结构依据 YAML 决定。
     > 假设配置中有 `log_mel` 和 `raw_waveform`：
@@ -112,7 +95,7 @@ ser_lib/datasets/
   1. **策略 `"truncate_pad"`**:
      - 从 `config` 获取 `max_frames` 常量。
      - 大于截断，短于前向填充右零补齐。
-     - 为特征增加通道 `[B, 1, Freq, Time]` 以兼容 `Conv2D` 二维卷积算子。
+     - 为二维特征增加通道 `[B, 1, Freq, Time]` 以兼容 `Conv2D` 二维卷积算子。
   
   2. **策略 `"dynamic_mask"`**:
      - 通过比对找出当前所有该 `Batch` 中输入序列的 Max 时间轴长度。由于是完全基于当前块的长短做局部动态 Padding（无常量约束）。
@@ -142,3 +125,51 @@ ser_lib/datasets/
          labels: Tensor(Total_Windows,)  # 扩展开拉直的标签
      )
      ```
+
+---
+
+## 进阶组件库
+
+### 1. `augment/` 数据增强算子包
+
+包含在音频不同空间状态下的正则化与泛化防御算子。流水线的装配由 `augment/builder.py` 工厂对外统一暴露。
+
+#### `augment/time_domain.py`
+针对 1D `Waveform` 浮点数张量进行物理信号层面的扰乱操作。包含：
+- `AddGaussianNoise(snr, p)`: 注入受控信噪比的高斯白噪，增强对低信噪比环境的鲁棒性。
+- `PitchShift(sample_rate, n_steps, p)`: 进行音高偏移（支持 Torchaudio 内置特征，降级使用重采样），模拟说话人情感张力波动。
+- `TimeStretch(rate, p)`: 使用相位声码器支持的时间拉伸（不变调），模拟不同语速。
+- `TimeShift(shift_max_ratio, p)`: 时间轴上的伪平移截断对齐补零机制。
+- `VolumeScale(gain_min, gain_max, p)`: 音量按随机倍率浮动缩放。
+- *(预留)* `RIRSimulation` 和 `DynamicSNRMixing`: 高级环境混响与背景噪声源混合（课程高阶预留）。
+
+#### `augment/freq_domain.py`
+针对经过特征提取的 2D `Spectrogram` 进行谱域能量平面的扰动：
+- `SpecMasking(time_mask_param, freq_mask_param, p)`: 原生 SpecAugment，时频二维涂抹抹零正则化。
+- `FilterAugment(n_band, db_range, band_width_ratio, p)`: 频段截断掩盖的柔和拉伸版本。
+- `VTLP(warp_factor_range, p)`: 声道长度扰动，针对频谱频率轴的特征缩放近似。
+- *(预留)* `SpecMix(p)`: 批次级 (Batch-level) 拼图特征增强。
+
+---
+
+### 2. `features/` 多模态特征提取包
+
+项目解耦的底层特征计算模块栈。通过 `features/builder.py` 内部工厂可灵活地实例化并在不同网络拓扑中任意组合。支持包括传统声学特征、时频能量、以及发音人微观病理学等超过 10 种特征计算过程。
+
+#### `features/time_domain.py`
+1D 本源时域/韵律及音质解析器：
+- **韵律类**:
+  - `PitchF0`: 基于 NCCF 的短时高精度基频抽取，直观表征情绪起伏与发音张力。
+  - `RMS`: 短时能量均方根获取，代表信号的绝对声压或感知响度激荡。
+  - `ZeroCrossingRate (ZCR)`: 信号过零速率评估，刻画清音、爆破音密度比例及含噪量。
+- **音质类**:
+  - `JitterShimmerHNR`: 联合计算依赖周期的声带微观抖动与谐波噪比 (仅基础实现)。
+
+#### `features/freq_domain.py`
+基于短时傅里叶变换及其衍生映射谱面的 2D 系特征算子：
+- `MFCC`: 经典的声学倒谱系数表示通道内涵。
+- `SpectralCentroid`: 频谱质心计算，量化情感频带的中心点转移规律。
+- `SpectralRolloff`: 85%能量截断点频标提取。
+- `SpectralFlatness`: 量化频带内的平坦几何与算数平均离散程度。
+- `SpectralFlux`: 计算谱级一阶时间差分能量激变值，追踪起音与截音。
+- `ComputeDeltas`: 附带挂件，可为任意基础二维特征矩阵增加一阶差分 (Delta) 与二阶差分 (Delta-Delta) 通道层级。
