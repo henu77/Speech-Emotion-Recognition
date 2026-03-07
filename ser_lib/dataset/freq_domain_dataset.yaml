@@ -1,0 +1,160 @@
+# =====================================================================
+# FreqDomainDataset 配置模板
+# 对应类: ser_lib.dataset.freq_domain_dataset.FreqDomainDataset
+#
+# 任务定位: 加载波形 → 可选时域增强 → 提取频域特征（Log-Mel/MFCC等2D时频谱）
+#           → 对每张频谱独立应用频域增强
+# 适用模型: 2D CNN、Conformer、SSAST 等基于时频图的主流 SER 模型
+#
+# __getitem__ 输出: {"log_mel": Tensor[n_mels, T], ...}, label, seq_length
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# 1. 基础元数据
+# ---------------------------------------------------------------------
+dataset_name: "my_dataset"
+num_classes: 4
+
+class_mapping:
+  0: { en: "Neutral", zh: "平静" }
+  1: { en: "Happy",   zh: "高兴" }
+  2: { en: "Sad",     zh: "悲伤" }
+  3: { en: "Angry",   zh: "愤怒" }
+
+# ---------------------------------------------------------------------
+# 2. 路径配置
+# ---------------------------------------------------------------------
+paths:
+  metadata_dir: "./data/my_dataset/metadata"
+  data_root_dir: "./data/my_dataset/audio"
+
+data_lists:
+  train: "train.jsonl"
+  val:   "val.jsonl"
+  test:  "test.jsonl"
+
+audio:
+  target_sr: 16000
+
+# ---------------------------------------------------------------------
+# 3. DataLoader 批处理策略
+# ---------------------------------------------------------------------
+# collate_fn 输出格式 (truncate_pad) - 2D CNN 标配:
+#   ({"x": {"log_mel": [B, 1, n_mels, T_fixed]}}, Labels[B])
+#
+# collate_fn 输出格式 (dynamic_mask) - Transformer 标配:
+#   ({"x": {"log_mel": [B, T_max, n_mels]}, "mask": [B, T_max]}, Labels[B])
+#
+# collate_fn 输出格式 (sliding_window) - 长音频推理:
+#   ({"x": {"log_mel": [W_total, 1, n_mels, win_size]},
+#     "window_counts": [B], "original_labels": [B]}, Labels_expanded[W_total])
+audio_processing:
+  strategy: "truncate_pad"
+  max_frames: 300            # 以 hop_length=256, 16kHz 为基准，300帧 ≈ 4.8s
+  window_size: 300           # [sliding_window 专用]
+  stride: 150                # 50% 重叠率
+
+# ---------------------------------------------------------------------
+# 4. 频域特征提取
+# 每个特征以独立 key 返回，支持同时开启多个
+# ---------------------------------------------------------------------
+features:
+  freq_domain:
+    # 对数梅尔频谱图（2D CNN 首选，课程3/4标配）
+    log_mel:
+      type: "LogMelSpectrogram"
+      sample_rate: 16000
+      n_fft: 1024
+      hop_length: 256
+      n_mels: 80             # 梅尔滤波器数量（Y 轴高度）
+      f_min: 0.0
+      f_max: 8000.0          # 不超过奈奎斯特频率 target_sr/2
+      power: 2.0
+      top_db: 80.0           # 动态范围压缩阈值 (dB)
+
+    # 梅尔频率倒谱系数（可与 log_mel 同时开启）
+    # mfcc:
+    #   type: "MFCC"
+    #   sample_rate: 16000
+    #   n_mfcc: 40
+    #   n_fft: 1024
+    #   hop_length: 256
+    #   n_mels: 80
+
+    # 原始功率谱图（无梅尔滤波器）
+    # spectrogram:
+    #   type: "Spectrogram"
+    #   n_fft: 1024
+    #   hop_length: 256
+    #   power: 2.0
+
+    # 梅尔谱图（不取对数）
+    # mel_spectrogram:
+    #   type: "MelSpectrogram"
+    #   sample_rate: 16000
+    #   n_fft: 1024
+    #   hop_length: 256
+    #   n_mels: 80
+
+# ---------------------------------------------------------------------
+# 5. 数据增强流水线
+# FreqDomainDataset 使用全部三级增强
+# ---------------------------------------------------------------------
+transforms:
+  # 【第一级】波形级时域增强（特征提取前应用）
+  waveform_level:
+    train:
+      # - type: "Normalize"
+      # - type: "AddGaussianNoise"
+      #   snr: 15.0
+      #   p: 0.5
+      # - type: "PitchShift"
+      #   n_steps: 4
+      #   p: 0.5
+      # - type: "TimeStretch"
+      #   rate: 1.2
+      #   p: 0.5
+      # - type: "TimeShift"
+      #   shift_max_ratio: 0.2
+      #   p: 0.5
+      # - type: "VolumeScale"
+      #   gain_min: 0.5
+      #   gain_max: 1.5
+      #   p: 0.5
+    val:
+    test:
+
+  advanced_waveform_level:   # 课程 7 预留
+    train:
+      # - type: "RIR_Simulation"
+      #   rir_path: "./data/rir_room.wav"
+      #   p: 0.5
+      # - type: "DynamicSNRMixing"
+      #   noise_dataset_path: "./data/musan"
+      #   p: 0.5
+
+  # 【第二级】频谱级增强（对每张频谱图独立应用，SOTA 标配）
+  spectrogram_level:
+    train:
+      - type: "SpecMasking"
+        time_mask_param: 30  # 时间轴最大连续遮掩帧数
+        freq_mask_param: 15  # 频率轴最大连续遮掩频带数
+        p: 0.5
+      # - type: "FilterAugment"
+      #   n_band: 1
+      #   db_range: [-5.0, 5.0]
+      #   band_width_ratio: 0.2
+      #   p: 0.5
+      # - type: "VTLP"
+      #   warp_factor_range: [0.9, 1.1]
+      #   p: 0.5
+    val:
+    test:
+
+  # 【第三级】批处理级增强（collate_fn 内应用，课程 7 预留）
+  batch_level:
+    train:
+      # - type: "Mixup"
+      #   alpha: 0.2
+      # - type: "SpecMix"
+      #   p: 0.5

@@ -1,0 +1,72 @@
+# =====================================================================
+# CustomDataset 配置模板
+# 对应类: ser_lib.dataset.custom_dataset.CustomDataset
+#
+# 任务定位: 用户完全自定义的特征提取（预训练模型 embedding、外部特征文件等）
+# 使用方式: 继承 CustomDataset 并覆写 _load_item
+#
+# __getitem__ 输出: {用户自定义 key: Tensor}, label, seq_length
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# 1. 基础元数据
+# ---------------------------------------------------------------------
+dataset_name: "my_dataset"
+num_classes: 4
+
+class_mapping:
+  0: { en: "Neutral", zh: "平静" }
+  1: { en: "Happy",   zh: "高兴" }
+  2: { en: "Sad",     zh: "悲伤" }
+  3: { en: "Angry",   zh: "愤怒" }
+
+# ---------------------------------------------------------------------
+# 2. 路径配置
+# ---------------------------------------------------------------------
+paths:
+  metadata_dir: "./data/my_dataset/metadata"
+  data_root_dir: "./data/my_dataset/audio"
+
+data_lists:
+  train: "train.jsonl"
+  val:   "val.jsonl"
+  test:  "test.jsonl"
+
+audio:
+  target_sr: 16000
+
+# ---------------------------------------------------------------------
+# 3. DataLoader 批处理策略
+# 根据自定义特征的格式自行选择合适的策略
+# ---------------------------------------------------------------------
+audio_processing:
+  strategy: "dynamic_mask"
+  max_frames: 300
+  window_size: 300
+  stride: 150
+
+# ---------------------------------------------------------------------
+# 4. 自定义特征配置
+# 具体字段由用户在 CustomDataset._load_item 中自行解析
+# ---------------------------------------------------------------------
+features:
+  custom:
+    # 示例: Wav2Vec2 embedding 配置
+    # wav2vec2:
+    #   model_name: "facebook/wav2vec2-base"
+    #   layer: -1              # 取第几层输出 (-1 = 最后一层)
+    #   freeze: true           # 是否冻结模型权重
+
+    # 示例: 外部预提取特征文件
+    # precomputed:
+    #   feature_dir: "./data/my_dataset/features"
+    #   file_ext: ".npy"
+
+# ---------------------------------------------------------------------
+# 5. 增强策略（可根据需要开启，CustomDataset 基类不强制使用）
+# ---------------------------------------------------------------------
+transforms:
+  waveform_level:
+    train:
+    val:
+    test:

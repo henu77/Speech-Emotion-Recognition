@@ -1,0 +1,89 @@
+# =====================================================================
+# WaveformDataset 配置模板
+# 对应类: ser_lib.dataset.waveform_dataset.WaveformDataset
+#
+# 任务定位: 加载原始波形并应用时域增强，不做任何特征提取。
+# 适用模型: Wav2Vec2, HuBERT, RawNet 等端到端原始波形模型。
+#
+# __getitem__ 输出: {"raw_waveform": Tensor[T]}, label, seq_length
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# 1. 基础元数据
+# ---------------------------------------------------------------------
+dataset_name: "my_dataset"
+num_classes: 4
+
+class_mapping:
+  0: { en: "Neutral", zh: "平静" }
+  1: { en: "Happy",   zh: "高兴" }
+  2: { en: "Sad",     zh: "悲伤" }
+  3: { en: "Angry",   zh: "愤怒" }
+
+# ---------------------------------------------------------------------
+# 2. 路径配置
+# ---------------------------------------------------------------------
+paths:
+  metadata_dir: "./data/my_dataset/metadata"
+  data_root_dir: "./data/my_dataset/audio"
+
+data_lists:
+  train: "train.jsonl"
+  val:   "val.jsonl"
+  test:  "test.jsonl"
+
+audio:
+  target_sr: 16000
+
+# ---------------------------------------------------------------------
+# 3. DataLoader 批处理策略
+# ---------------------------------------------------------------------
+# 注意: WaveformDataset 返回的 raw_waveform 是 1D 序列 [T]
+# 推荐使用 dynamic_mask 策略以保留序列真实长度信息
+#
+# collate_fn 输出格式 (dynamic_mask):
+#   ({"x": {"raw_waveform": [B, T_max]}, "mask": [B, T_max]}, Labels[B])
+#
+# collate_fn 输出格式 (truncate_pad):
+#   ({"x": {"raw_waveform": [B, 1, 1, T_fixed]}}, Labels[B])
+audio_processing:
+  strategy: "dynamic_mask"   # 推荐: dynamic_mask | truncate_pad
+  max_frames: 64000          # [truncate_pad 专用] 16kHz × 4s = 64000 采样点
+  window_size: 64000         # [sliding_window 专用]
+  stride: 32000
+
+# ---------------------------------------------------------------------
+# 4. 时域增强
+# WaveformDataset 只读取 waveform_level 与 advanced_waveform_level
+# ---------------------------------------------------------------------
+transforms:
+  waveform_level:
+    train:
+      # - type: "Normalize"
+      # - type: "AddGaussianNoise"
+      #   snr: 15.0
+      #   p: 0.5
+      # - type: "PitchShift"
+      #   n_steps: 4
+      #   p: 0.5
+      # - type: "TimeStretch"
+      #   rate: 1.2
+      #   p: 0.5
+      # - type: "TimeShift"
+      #   shift_max_ratio: 0.2
+      #   p: 0.5
+      # - type: "VolumeScale"
+      #   gain_min: 0.5
+      #   gain_max: 1.5
+      #   p: 0.5
+    val:
+    test:
+
+  advanced_waveform_level:   # 课程 7 环境鲁棒性增强，预留
+    train:
+      # - type: "RIR_Simulation"
+      #   rir_path: "./data/rir_room.wav"
+      #   p: 0.5
+      # - type: "DynamicSNRMixing"
+      #   noise_dataset_path: "./data/musan"
+      #   p: 0.5

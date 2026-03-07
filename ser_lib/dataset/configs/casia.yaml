@@ -20,7 +20,7 @@ class_mapping:
     en: Fear
     zh: 恐惧
 paths:
-  metadata_dir: ser_lib/datasets/configs/casia
+  metadata_dir: ser_lib/dataset/configs/casia
   data_root_dir: data/CASIA
 data_lists:
   train: train.jsonl
