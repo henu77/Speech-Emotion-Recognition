@@ -7,24 +7,6 @@ import torchaudio.transforms as T
 # 1. 频谱系特征 (Spectral Features)
 # ==============================================================================
 
-class MFCC(nn.Module):
-    """梅尔频率倒谱系数 (Mel-Frequency Cepstral Coefficients)。反映声道的滤波形状。"""
-    def __init__(self, sample_rate: int = 16000, n_mfcc: int = 13, n_fft: int = 1024, hop_length: int = 256, n_mels: int = 80):
-        super().__init__()
-        self.transform = T.MFCC(
-            sample_rate=sample_rate,
-            n_mfcc=n_mfcc,
-            melkwargs={
-                "n_fft": n_fft,
-                "hop_length": hop_length,
-                "n_mels": n_mels,
-                "center": True
-            }
-        )
-
-    def forward(self, waveform: torch.Tensor) -> torch.Tensor:
-        # [B, n_mfcc, Time]
-        return self.transform(waveform)
 
 
 class SpectralCentroid(nn.Module):

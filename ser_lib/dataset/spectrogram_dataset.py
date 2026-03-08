@@ -1,25 +1,24 @@
 import torch
+import torchaudio.transforms as T
 from typing import Dict, Tuple
 
 from ser_lib.dataset.base_dataset import BaseConfigDataset
 from ser_lib.dataset.augment.builder import build_time_domain_transforms, build_freq_domain_transforms
-from ser_lib.dataset.features.builder import build_feature_extractors
+from ser_lib.dataset.features.builder import build_feature_extractor
 
 
-class FreqDomainDataset(BaseConfigDataset):
-    """频域特征数据集。
+class SpectrogramDataset(BaseConfigDataset):
+    """谱图数据集。
 
-    任务定位: 加载原始音频 → 可选时域增强 → 提取频域特征（Log-Mel、MFCC 等 2D 时频谱）
-    → 对每张频谱图独立应用频域增强 → 以字典形式分别返回各频域特征。
-
-    配置文件: freq_domain_dataset.yaml
+    任务定位: 支持提取指定的谱图 (Spectrogram, MelSpectrogram, LogMelSpectrogram, MFCC)。
+    对指定的单一谱图应用频域增强并以字典形式返回。
+    配置文件: spectrogram_dataset.yaml
 
     __getitem__ 返回的 features 字典::
 
         {
-            "log_mel": Tensor[n_mels, T],
-            "mfcc":    Tensor[n_mfcc, T],   # 若同时开启
-            ...
+            "melspectrogram": Tensor[Freq, T],
+            ... # 取决于选择的类型
         }
     """
 
@@ -27,7 +26,11 @@ class FreqDomainDataset(BaseConfigDataset):
         super().__init__(config_path, split)
 
         transforms_cfg = self.config.get('transforms', {})
-        features_cfg = self.config.get('features', {})
+        spec_cfg = self.config.get('spectrogram', {})
+        
+        # 用户指定的谱图类型
+        self.spec_type_name = spec_cfg.get('type', 'MelSpectrogram')
+        spec_kwargs = spec_cfg.get('kwargs', {})
 
         self.wave_transform = build_time_domain_transforms(
             transforms_cfg.get('waveform_level', {}).get(split, []),
@@ -37,10 +40,12 @@ class FreqDomainDataset(BaseConfigDataset):
             transforms_cfg.get('advanced_waveform_level', {}).get(split, []),
             sample_rate=self.target_sr,
         )
-        self.extractors = build_feature_extractors(features_cfg.get('freq_domain', {}))
         self.spec_transform = build_freq_domain_transforms(
             transforms_cfg.get('spectrogram_level', {}).get(split, [])
         )
+
+        # 构建谱图提取器
+        self.extractor = build_feature_extractor(self.spec_type_name, spec_kwargs, self.target_sr)
 
     def _load_item(self, waveform: torch.Tensor, item: dict) -> Tuple[Dict[str, torch.Tensor], int]:
         # 1. （可选）时域增强
@@ -49,15 +54,13 @@ class FreqDomainDataset(BaseConfigDataset):
         if self.adv_wave_transform:
             waveform = self.adv_wave_transform(waveform)
 
-        # 2. 逐特征提取 + 频域增强（每张谱图独立）
-        features: Dict[str, torch.Tensor] = {}
-        for feat_name, extractor in self.extractors.items():
-            feat = extractor(waveform)
+        # 2. 谱图提取
+        feat = self.extractor(waveform)
+
+        # 3. 频域增强
+        if self.spec_transform:
             feat = self.spec_transform(feat)
-            features[feat_name] = feat.squeeze(0)   # [Freq, T]
 
-        if not features:
-            return {}, 0
-
-        seq_length = list(features.values())[0].shape[-1]
-        return features, seq_length
+        feat = feat.squeeze(0)  # [Freq, T]
+        
+        return {self.spec_type_name.lower(): feat}, feat.shape[-1]

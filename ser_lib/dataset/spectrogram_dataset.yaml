@@ -1,0 +1,94 @@
+# =====================================================================
+# SpectrogramDataset 配置模板
+# 对应类: ser_lib.dataset.spectrogram_dataset.SpectrogramDataset
+#
+# 任务定位: 支持提取指定的单一谱图类型 (Spectrogram, MelSpectrogram, LogMelSpectrogram, MFCC)，
+# 并可针对该谱图应用后续频域数据增强（如 SpecAugment）。
+#
+# __getitem__ 输出: {"<spec_type_name_lower>": Tensor[Freq, T]}, label, seq_length
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# 1. 基础元数据
+# ---------------------------------------------------------------------
+dataset_name: "my_spectrogram_dataset"
+num_classes: 4
+
+class_mapping:
+  0: { en: "Neutral", zh: "平静" }
+  1: { en: "Happy",   zh: "高兴" }
+  2: { en: "Sad",     zh: "悲伤" }
+  3: { en: "Angry",   zh: "愤怒" }
+
+# ---------------------------------------------------------------------
+# 2. 路径配置
+# ---------------------------------------------------------------------
+paths:
+  metadata_dir: "./data/my_dataset/metadata"
+  data_root_dir: "./data/my_dataset/audio"
+
+data_lists:
+  train: "train.jsonl"
+  val:   "val.jsonl"
+  test:  "test.jsonl"
+
+audio:
+  target_sr: 16000
+
+# ---------------------------------------------------------------------
+# 3. 谱图特征提取配置
+# ---------------------------------------------------------------------
+spectrogram:
+  # 支持的类型: Spectrogram, MelSpectrogram, LogMelSpectrogram, MFCC
+  type: "LogMelSpectrogram"  
+  kwargs:
+    # 这里填写对应 torchaudio.transforms 提取器的参数
+    n_fft: 400
+    win_length: 400
+    hop_length: 160
+    n_mels: 80
+    f_min: 0.0
+    f_max: 8000.0
+
+# ---------------------------------------------------------------------
+# 4. DataLoader 批处理策略
+# ---------------------------------------------------------------------
+# 注意: SpectrogramDataset 返回的特征是 2D 的 [Freq, T]
+# collate_fn 会在 truncate_pad 策略下给它插入一个 Channel 纬度变成 [Batch, 1, Freq, T]
+# 适合 2D CNN 模型 (如 ResNet)
+audio_processing:
+  strategy: "truncate_pad"   # 推荐: truncate_pad | dynamic_mask (如果是Transformer)
+  max_frames: 300            # 例如 3s 语音 / 10ms hop_length = 300 帧
+  window_size: 300           # [sliding_window 专用]
+  stride: 150
+
+# ---------------------------------------------------------------------
+# 5. 数据增强 (时域/频域)
+# ---------------------------------------------------------------------
+transforms:
+  # 波形级别的时域增强 (提取特征前执行)
+  waveform_level:
+    train:
+      # - type: "AddGaussianNoise"
+      #   snr: 15.0
+      #   p: 0.5
+    val:
+    test:
+
+  advanced_waveform_level:
+    train:
+      # - type: "RIR_Simulation"
+      #   rir_path: "./data/rir_room.wav"
+      #   p: 0.5
+
+  # 谱图级别的频域增强 (提取谱图后执行)
+  spectrogram_level:
+    train:
+      # - type: "TimeMasking"
+      #   time_mask_param: 40
+      #   p: 0.5
+      # - type: "FrequencyMasking"
+      #   freq_mask_param: 15
+      #   p: 0.5
+    val:
+    test:

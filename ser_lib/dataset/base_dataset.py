@@ -50,6 +50,7 @@ class BaseConfigDataset(Dataset):
 
         self.data_list = self._load_data_list(list_file)
         self.data_root_dir = self.config.get('paths', {}).get('data_root_dir', None)
+        self.resamplers: Dict[int, torch.nn.Module] = {}
 
     # ------------------------------------------------------------------
     # 公共辅助方法
@@ -94,7 +95,9 @@ class BaseConfigDataset(Dataset):
         end_ms = item.get('end_time_ms', None)
 
         if start_ms > 0 or end_ms is not None:
-            orig_sr = torchaudio.info(audio_path).sample_rate
+            orig_sr = item.get('sample_rate') or item.get('sr')
+            if not orig_sr:
+                orig_sr = torchaudio.info(audio_path).sample_rate
             frame_offset = int((start_ms / 1000.0) * orig_sr)
             num_frames = int(((end_ms - start_ms) / 1000.0) * orig_sr) if end_ms else -1
             waveform, sr = torchaudio.load(audio_path, frame_offset=frame_offset, num_frames=num_frames)
@@ -106,7 +109,9 @@ class BaseConfigDataset(Dataset):
             waveform = torch.mean(waveform, dim=0, keepdim=True)
         # 重采样到目标采样率
         if sr != self.target_sr:
-            waveform = T.Resample(orig_freq=sr, new_freq=self.target_sr)(waveform)
+            if sr not in self.resamplers:
+                self.resamplers[sr] = T.Resample(orig_freq=sr, new_freq=self.target_sr)
+            waveform = self.resamplers[sr](waveform)
 
         return waveform  # [1, T]
 

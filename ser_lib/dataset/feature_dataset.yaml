@@ -1,17 +1,15 @@
 # =====================================================================
-# CustomDataset 配置模板
-# 对应类: ser_lib.dataset.custom_dataset.CustomDataset
+# FeatureDataset 配置模板
+# 对应类: ser_lib.dataset.feature_dataset.FeatureDataset
 #
-# 任务定位: 用户完全自定义的特征提取（预训练模型 embedding、外部特征文件等）
-# 使用方式: 继承 CustomDataset 并覆写 _load_item
-#
-# __getitem__ 输出: {用户自定义 key: Tensor}, label, seq_length
+# 任务定位: 自由挑选不同的时域及其他类型声学特征（F0, RMS, ZCR等），
+#           以字典分别返回各维度 Tensor，方便自定义组合或对齐。
 # =====================================================================
 
 # ---------------------------------------------------------------------
 # 1. 基础元数据
 # ---------------------------------------------------------------------
-dataset_name: "my_dataset"
+dataset_name: "my_feature_dataset"
 num_classes: 4
 
 class_mapping:
@@ -37,36 +35,50 @@ audio:
 
 # ---------------------------------------------------------------------
 # 3. DataLoader 批处理策略
-# 根据自定义特征的格式自行选择合适的策略
 # ---------------------------------------------------------------------
 audio_processing:
-  strategy: "dynamic_mask"
-  max_frames: 300
-  window_size: 300
+  strategy: "dynamic_mask"   # 推荐: dynamic_mask 适合序列输入
+  max_frames: 300            # [truncate_pad 专用]
+  window_size: 300           # [sliding_window 专用]
   stride: 150
 
 # ---------------------------------------------------------------------
-# 4. 自定义特征配置
-# 具体字段由用户在 CustomDataset._load_item 中自行解析
+# 4. 特征抽取配置 (可组合多个)
 # ---------------------------------------------------------------------
 features:
-  custom:
-    # 示例: Wav2Vec2 embedding 配置
-    # wav2vec2:
-    #   model_name: "facebook/wav2vec2-base"
-    #   layer: -1              # 取第几层输出 (-1 = 最后一层)
-    #   freeze: true           # 是否冻结模型权重
-
-    # 示例: 外部预提取特征文件
-    # precomputed:
-    #   feature_dir: "./data/my_dataset/features"
-    #   file_ext: ".npy"
+  selected_features:
+    f0:       # 特征名为 "f0"
+      type: "F0"
+      kwargs:
+        hop_length: 160
+        fmin: 50.0
+        fmax: 500.0
+    rms:      # 特征名为 "rms"
+      type: "RMS"
+      kwargs:
+        frame_length: 400
+        hop_length: 160
+    zcr:      # 特征名为 "zcr"
+      type: "ZCR"
+      kwargs:
+        frame_length: 400
+        hop_length: 160
 
 # ---------------------------------------------------------------------
-# 5. 增强策略（可根据需要开启，CustomDataset 基类不强制使用）
+# 5. 数据增强 (时域级别)
 # ---------------------------------------------------------------------
 transforms:
   waveform_level:
     train:
+      # - type: "Normalize"
+      # - type: "AddGaussianNoise"
+      #   snr: 15.0
+      #   p: 0.5
     val:
     test:
+
+  advanced_waveform_level:
+    train:
+      # - type: "RIR_Simulation"
+      #   rir_path: "./data/rir_room.wav"
+      #   p: 0.5

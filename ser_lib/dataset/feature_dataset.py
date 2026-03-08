@@ -3,25 +3,23 @@ from typing import Dict, Tuple
 
 from ser_lib.dataset.base_dataset import BaseConfigDataset
 from ser_lib.dataset.augment.builder import build_time_domain_transforms
-from ser_lib.dataset.features.builder import build_feature_extractors
+from ser_lib.dataset.features.builder import build_feature_extractor
+import torch.nn as nn
 
 
-class TimeDomainDataset(BaseConfigDataset):
-    """时域特征数据集。
+class FeatureDataset(BaseConfigDataset):
+    """特征域数据集。
 
-    任务定位: 加载原始音频 → 时域增强 → 提取时域特征（F0、RMS、ZCR 等）
-    → 将所有 1D 特征序列在特征维上拼接为单一矩阵返回。
-
-    配置文件: time_domain_dataset.yaml
+    任务定位: 用户能自由选择特征 (时域等)，按词典直接返回，不强制拼接。
+    配置文件: feature_dataset.yaml
 
     __getitem__ 返回的 features 字典::
 
         {
-            "time_features": Tensor[n_features, T]
+            "feature_name_1": Tensor[T_1] 或 Tensor[D, T_1],
+            "feature_name_2": Tensor[T_2] 或 Tensor[D, T_2],
+            ...
         }
-
-    Notes:
-        各特征提取器必须使用相同的 hop_length 以保证时间步对齐。
     """
 
     def __init__(self, config_path: str, split: str = 'train'):
@@ -38,7 +36,11 @@ class TimeDomainDataset(BaseConfigDataset):
             transforms_cfg.get('advanced_waveform_level', {}).get(split, []),
             sample_rate=self.target_sr,
         )
-        self.extractors = build_feature_extractors(features_cfg.get('time_domain', {}))
+        self.extractors = nn.ModuleDict()
+        for feat_name, cfg in features_cfg.get('selected_features', {}).items():
+            feat_type = cfg.get('type')
+            kwargs = cfg.get('kwargs', {})
+            self.extractors[feat_name] = build_feature_extractor(feat_type, kwargs, self.target_sr)
 
     def _load_item(self, waveform: torch.Tensor, item: dict) -> Tuple[Dict[str, torch.Tensor], int]:
         # 1. 时域增强
@@ -47,15 +49,15 @@ class TimeDomainDataset(BaseConfigDataset):
         if self.adv_wave_transform:
             waveform = self.adv_wave_transform(waveform)
 
-        # 2. 逐特征提取并拼接
-        feat_tensors = []
-        for extractor in self.extractors.values():
-            feat = extractor(waveform).squeeze(0)    # [T]
-            feat_tensors.append(feat.unsqueeze(0))   # [1, T]
+        # 2. 逐特征提取并放入字典
+        features: Dict[str, torch.Tensor] = {}
+        for feat_name, extractor in self.extractors.items():
+            feat = extractor(waveform).squeeze(0)
+            features[feat_name] = feat
 
-        if not feat_tensors:
+        if not features:
             raw = waveform.squeeze(0)
-            return {"time_features": raw.unsqueeze(0)}, raw.shape[-1]
+            return {"raw_waveform": raw}, raw.shape[-1]
 
-        time_features = torch.cat(feat_tensors, dim=0)  # [n_features, T]
-        return {"time_features": time_features}, time_features.shape[-1]
+        seq_length = list(features.values())[0].shape[-1]
+        return features, seq_length
