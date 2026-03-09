@@ -1,0 +1,171 @@
+# =====================================================================
+# FeatureDataset 标准配置文件
+# 对应类: ser_lib.dataset.feature_dataset.FeatureDataset
+#
+# 任务定位: 自由组合多种声学特征 (F0, RMS, ZCR, SpectralCentroid 等)，
+#           以字典形式返回各特征 Tensor，适用于自定义特征融合架构。
+#
+# __getitem__ 输出: {"f0": Tensor[T], "rms": Tensor[T], ...}, label, seq_length
+#
+# 【配置隔离规则】本配置文件必须包含 features 节点，不得包含 spectrogram 节点
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# 1. 数据集元数据
+# ---------------------------------------------------------------------
+dataset_name: "CASIA_Feature"
+num_classes: 6
+
+class_mapping:
+  0: { en: "Neutral", zh: "平静" }
+  1: { en: "Happy", zh: "高兴" }
+  2: { en: "Angry", zh: "愤怒" }
+  3: { en: "Sad", zh: "悲伤" }
+  4: { en: "Surprise", zh: "惊吓" }
+  5: { en: "Fear", zh: "恐惧" }
+
+# ---------------------------------------------------------------------
+# 2. 路径配置
+# ---------------------------------------------------------------------
+paths:
+  metadata_dir: "ser_lib/dataset/configs/casia"
+  data_root_dir: "data/CASIA"
+
+data_lists:
+  train: "train.jsonl"
+  val: "val.jsonl"
+  test: "test.jsonl"
+
+# ---------------------------------------------------------------------
+# 3. 音频基础参数
+# ---------------------------------------------------------------------
+audio:
+  target_sr: 16000
+
+# ---------------------------------------------------------------------
+# 4. DataLoader 批处理策略
+# ---------------------------------------------------------------------
+# FeatureDataset 返回多特征字典，推荐使用 dynamic_mask 保留真实长度
+# collate_fn 输出格式 (dynamic_mask):
+#   ({"x": {"f0": [B, T_max, 1], "rms": [B, T_max, 1], ...}, "mask": [B, T_max]}, Labels[B])
+# ---------------------------------------------------------------------
+audio_processing:
+  strategy: "dynamic_mask"
+  max_frames: 300            # [truncate_pad 专用]
+  window_size: 300           # [sliding_window 专用]
+  stride: 150                # [sliding_window 专用]
+
+# ---------------------------------------------------------------------
+# 5. 多特征配置 (FeatureDataset 专属)
+# 支持类型: F0, RMS, ZCR, JitterShimmerHNR,
+#           SpectralCentroid, SpectralRolloff, SpectralFlatness, SpectralFlux, Delta
+# ---------------------------------------------------------------------
+features:
+  selected_features:
+    # 韵律特征: 基频 F0 (音高)
+    f0:
+      type: "F0"
+      kwargs:
+        hop_length: 256
+        # freq_low: 50       # 基频检测下限 (Hz)
+        # freq_high: 800     # 基频检测上限 (Hz)
+
+    # 韵律特征: 短时能量 RMS (响度)
+    rms:
+      type: "RMS"
+      kwargs:
+        win_length: 400
+        hop_length: 256
+
+    # 韵律特征: 过零率 ZCR (高频成分指标)
+    zcr:
+      type: "ZCR"
+      kwargs:
+        win_length: 400
+        hop_length: 256
+
+    # 频域特征: 谱质心 (声音明亮度)
+    spectral_centroid:
+      type: "SpectralCentroid"
+      kwargs:
+        n_fft: 1024
+        hop_length: 256
+
+    # 频域特征: 谱滚降 (频谱分布)
+    spectral_rolloff:
+      type: "SpectralRolloff"
+      kwargs:
+        n_fft: 1024
+        hop_length: 256
+        roll_percent: 0.85
+
+    # 频域特征: 谱平坦度 (纯音 vs 噪声)
+    spectral_flatness:
+      type: "SpectralFlatness"
+      kwargs:
+        n_fft: 1024
+        hop_length: 256
+
+# ---------------------------------------------------------------------
+# 6. 数据增强配置
+# FeatureDataset 使用 waveform_level，不使用 spectrogram_level
+# ---------------------------------------------------------------------
+transforms:
+  # 波形级基础增强
+  waveform_level:
+    train:
+      # 示例 1: 高斯噪声注入
+      - type: "AddGaussianNoise"
+        snr: 18.0
+        p: 0.5
+
+      # 示例 2: 时间平移
+      - type: "TimeShift"
+        shift_max_ratio: 0.15
+        p: 0.3
+
+      # 示例 3: 音量缩放
+      - type: "VolumeScale"
+        gain_min: 0.75
+        gain_max: 1.25
+        p: 0.4
+
+    val: []
+    test: []
+
+  # 波形级高级增强
+  advanced_waveform_level:
+    train:
+      # 示例 1: 音调偏移
+      - type: "PitchShift"
+        n_steps: 2
+        p: 0.3
+
+      # 示例 2: 时间拉伸
+      - type: "TimeStretch"
+        rate: 1.1
+        p: 0.3
+
+      # 示例 3: 动态背景噪声混合 (需外部噪声库)
+      # - type: "DynamicSNRMixing"
+      #   noise_dataset_path: "./data/musan"
+      #   p: 0.3
+
+    val: []
+    test: []
+
+  # 频域增强 (FeatureDataset 不使用，保留为空)
+  spectrogram_level:
+    train: []
+    val: []
+    test: []
+
+  # 批次级增强
+  batch_level:
+    train:
+      # 示例: Mixup (需在 collate_fn 中实现)
+      # - type: "Mixup"
+      #   alpha: 0.2
+      #   p: 0.5
+    val: []
+    test: []

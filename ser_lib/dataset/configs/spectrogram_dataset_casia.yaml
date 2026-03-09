@@ -1,5 +1,5 @@
 # =====================================================================
-# SpectrogramDataset 标准配置模板
+# SpectrogramDataset 标准配置文件
 # 对应类: ser_lib.dataset.spectrogram_dataset.SpectrogramDataset
 #
 # 任务定位: 提取单一谱图特征 (Spectrogram, MelSpectrogram, LogMelSpectrogram, MFCC)，
@@ -13,7 +13,7 @@
 # ---------------------------------------------------------------------
 # 1. 数据集元数据
 # ---------------------------------------------------------------------
-dataset_name: "my_spectrogram_dataset"
+dataset_name: "CASIA_Spectrogram"
 num_classes: 6
 
 class_mapping:
@@ -28,8 +28,8 @@ class_mapping:
 # 2. 路径配置
 # ---------------------------------------------------------------------
 paths:
-  metadata_dir: "./data/my_dataset/metadata"
-  data_root_dir: "./data/my_dataset/audio"
+  metadata_dir: "ser_lib/dataset/configs/casia"
+  data_root_dir: "data/CASIA"
 
 data_lists:
   train: "train.jsonl"
@@ -45,21 +45,15 @@ audio:
 # ---------------------------------------------------------------------
 # 4. DataLoader 批处理策略
 # ---------------------------------------------------------------------
-# SpectrogramDataset 返回 2D 谱图 [Freq, T]
-#
-# 策略说明:
-#   - truncate_pad: 固定长度填充/截断，输出 [B, 1, Freq, T_fixed]，适合 2D CNN
-#   - dynamic_mask: 动态长度 + 注意力掩码，输出 [B, T_max, Freq] + mask，适合 Transformer
-#   - sliding_window: 滑动窗口切分，用于长音频评估投票
-#
+# SpectrogramDataset 返回 2D 谱图 [Freq, T]，推荐使用 truncate_pad
 # collate_fn 输出格式 (truncate_pad):
 #   ({"x": {"melspectrogram": [B, 1, Freq, T_fixed]}}, Labels[B])
 # ---------------------------------------------------------------------
 audio_processing:
   strategy: "truncate_pad"
   max_frames: 300            # 约 3s 语音 (hop_length=256, sr=16000)
-  window_size: 300           # [sliding_window 专用] 窗口大小
-  stride: 150                # [sliding_window 专用] 步长 (50% 重叠)
+  window_size: 300           # [sliding_window 专用]
+  stride: 150                # [sliding_window 专用] 50% 重叠
 
 # ---------------------------------------------------------------------
 # 5. 谱图特征配置 (SpectrogramDataset 专属)
@@ -68,109 +62,89 @@ audio_processing:
 spectrogram:
   type: "LogMelSpectrogram"
   kwargs:
-    sample_rate: 16000       # 采样率，范围: [8000, 48000]
-    n_fft: 1024              # FFT 窗口大小，范围: [64, 8192]
-    win_length: 1024         # 窗函数长度，范围: [64, 8192]，需 <= n_fft
-    hop_length: 256          # 帧移步长，范围: [16, 4096]
-    n_mels: 80               # Mel 滤波器组数量，范围: [20, 256]
-    f_min: 0.0               # 最低频率 (Hz)，范围: [0.0, sample_rate/2]
-    f_max: 8000.0            # 最高频率 (Hz)，范围: [f_min, sample_rate/2]
-    power: 2.0               # 能量谱指数，范围: [1.0, 3.0]
-    top_db: 80.0             # Log-Mel 动态范围裁剪 (dB)，范围: [40.0, 120.0]
+    sample_rate: 16000
+    n_fft: 1024              # FFT 窗口大小
+    win_length: 1024         # 窗函数长度
+    hop_length: 256          # 帧移步长
+    n_mels: 80               # Mel 滤波器组数量
+    f_min: 0.0               # 最低频率 (Hz)
+    f_max: 8000.0            # 最高频率 (Hz)
+    power: 2.0               # 能量谱指数
+    top_db: 80.0             # Log-Mel 动态范围裁剪 (dB)
 
 # ---------------------------------------------------------------------
 # 6. 数据增强配置
 # SpectrogramDataset 使用 waveform_level + spectrogram_level
 # ---------------------------------------------------------------------
 transforms:
-  # ================================================================
   # 波形级基础增强 (谱图提取前执行)
-  # ================================================================
   waveform_level:
     train:
-      # 示例 1: 波形归一化
-      - type: "Normalize"
-
-      # 示例 2: 高斯噪声注入
+      # 示例 1: 高斯噪声注入
       - type: "AddGaussianNoise"
-        snr: 20.0            # 信噪比 (dB)，范围: [5.0, 40.0]
+        snr: 20.0
         p: 0.5
+
+      # 示例 2: 音量缩放
+      - type: "VolumeScale"
+        gain_min: 0.8
+        gain_max: 1.2
+        p: 0.4
 
       # 示例 3: 时间平移
       - type: "TimeShift"
         shift_max_ratio: 0.15
         p: 0.3
 
-      # 示例 4: 音量缩放
-      - type: "VolumeScale"
-        gain_min: 0.8
-        gain_max: 1.2
-        p: 0.4
-
     val: []
     test: []
 
-  # ================================================================
   # 波形级高级增强
-  # ================================================================
   advanced_waveform_level:
     train:
       # 示例 1: 音调偏移
       - type: "PitchShift"
-        n_steps: 2           # 半音阶数，范围: [-12, 12]
+        n_steps: 2
         p: 0.3
 
       # 示例 2: 时间拉伸
       - type: "TimeStretch"
-        rate: 1.1            # 速率，范围: [0.5, 2.0]
+        rate: 1.1
         p: 0.3
-
-      # 示例 3: 房间冲激响应混响
-      # - type: "RIR_Simulation"
-      #   rir_path: "./data/rir/room_impulse_response.wav"
-      #   p: 0.3
 
     val: []
     test: []
 
-  # ================================================================
   # 频域增强 (谱图提取后执行) - SpectrogramDataset 核心增强
-  # ================================================================
   spectrogram_level:
     train:
       # 示例 1: SpecAugment 时频掩码
       - type: "SpecMasking"
-        time_mask_param: 40   # 时间掩码最大宽度，范围: [1, 200]
-        freq_mask_param: 15   # 频率掩码最大宽度，范围: [1, 100]
+        time_mask_param: 40   # 时间掩码最大宽度
+        freq_mask_param: 15   # 频率掩码最大宽度
         p: 0.5
 
       # 示例 2: 随机频带滤波
       - type: "FilterAugment"
-        n_band: 2             # 频带数量，范围: [1, 5]
+        n_band: 2             # 频带数量
         db_range: [-6.0, 6.0] # 增益范围 (dB)
-        band_width_ratio: 0.2 # 频带宽度比例，范围: [0.05, 0.5]
+        band_width_ratio: 0.2 # 频带宽度比例
         p: 0.4
 
       # 示例 3: 声道长度扰动 (模拟不同说话人)
       - type: "VTLP"
-        warp_factor_range: [0.9, 1.1]  # 扭曲因子范围
+        warp_factor_range: [0.9, 1.1]
         p: 0.3
-
-      # 示例 4: SpecMix/CutMix (需在 batch_level 实现)
-      # - type: "SpecMix"
-      #   p: 0.5
 
     val: []
     test: []
 
-  # ================================================================
   # 批次级增强
-  # ================================================================
   batch_level:
     train:
-      # 示例: Mixup 样本混合 (需在 collate_fn 中实现)
+      # 示例: Mixup (需在 collate_fn 中实现)
       # - type: "Mixup"
-      #   alpha: 0.2          # Beta 分布参数，范围: [0.1, 1.0]
+      #   alpha: 0.2
       #   p: 0.5
     val: []
     test: []

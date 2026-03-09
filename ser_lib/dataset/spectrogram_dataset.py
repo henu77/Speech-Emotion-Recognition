@@ -48,19 +48,51 @@ class SpectrogramDataset(BaseConfigDataset):
         self.extractor = build_feature_extractor(self.spec_type_name, spec_kwargs, self.target_sr)
 
     def _load_item(self, waveform: torch.Tensor, item: dict) -> Tuple[Dict[str, torch.Tensor], int]:
+        # 维度检查：输入波形应为 [1, T] 或 [C, T]
+        assert waveform.dim() == 2, (
+            f"[SpectrogramDataset._load_item] 输入波形维度错误: 期望 2D [1, T], 实际 {waveform.dim()}D {tuple(waveform.shape)}"
+        )
+
         # 1. （可选）时域增强
         if self.wave_transform:
             waveform = self.wave_transform(waveform)
         if self.adv_wave_transform:
             waveform = self.adv_wave_transform(waveform)
 
+        # 维度检查：增强后波形仍应为 2D
+        assert waveform.dim() == 2, (
+            f"[SpectrogramDataset._load_item] 增强后波形维度错误: 期望 2D [1, T], 实际 {waveform.dim()}D {tuple(waveform.shape)}"
+        )
+
         # 2. 谱图提取
         feat = self.extractor(waveform)
+
+        # 维度检查：谱图提取后应为 3D [1, Freq, T] 或 [C, Freq, T]
+        assert feat.dim() == 3, (
+            f"[SpectrogramDataset._load_item] 谱图提取后维度错误: 期望 3D [1, Freq, T], 实际 {feat.dim()}D {tuple(feat.shape)}"
+        )
 
         # 3. 频域增强
         if self.spec_transform:
             feat = self.spec_transform(feat)
 
+        # 维度检查：频域增强后仍应为 3D
+        assert feat.dim() == 3, (
+            f"[SpectrogramDataset._load_item] 频域增强后维度错误: 期望 3D [1, Freq, T], 实际 {feat.dim()}D {tuple(feat.shape)}"
+        )
+
         feat = feat.squeeze(0)  # [Freq, T]
-        
-        return {self.spec_type_name.lower(): feat}, feat.shape[-1]
+
+        # 维度检查：输出谱图应为 2D [Freq, T]
+        assert feat.dim() == 2, (
+            f"[SpectrogramDataset._load_item] 输出谱图维度错误: 期望 2D [Freq, T], 实际 {feat.dim()}D {tuple(feat.shape)}"
+        )
+
+        seq_length = feat.shape[-1]
+
+        # 维度检查：seq_length 与时间帧数一致性
+        assert seq_length == feat.shape[-1], (
+            f"[SpectrogramDataset._load_item] seq_length 不一致: seq_length={seq_length}, 时间帧数={feat.shape[-1]}"
+        )
+
+        return {self.spec_type_name.lower(): feat}, seq_length

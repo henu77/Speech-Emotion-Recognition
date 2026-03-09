@@ -1,175 +1,693 @@
-# SER 数据集模块 (Data Engine)
+# SER Dataset Module
 
-本模块作为整个语音情感识别项目的数据基座，全权负责音频读取、多模态特征并行提取、变长序列对齐以及多级数据增强等核心任务。
+语音情感识别系统的数据集加载模块，采用配置驱动设计，支持多种特征提取策略与数据增强流水线。
 
-## 目录结构
+---
 
-```text
-ser_lib/dataset/
-├── base_dataset.py       # 核心配置驱动的数据集类 (`BaseConfigDataset`)
-├── collate.py            # 长度重组对齐与批处理闭包构建工厂 (`build_collate_fn`)
-├── template_dataset.yaml # 标杆型 YAML 配置模板，控制从采样率、特征提取到策略映射的所有底层变量
-├── augment/              # 数据增强核心算子包
-│   ├── builder.py        # 增强流水线构建工厂
-│   ├── time_domain.py    # 1D 波形信号变换模块 (加噪, 音高, 推移, 混响)
-│   └── freq_domain.py    # 2D 频谱增强模块 (掩盖, 滤波, 变形等 SOTA 策略)
-├── features/             # 声学特征提取核心包
-│   ├── builder.py        # 特征提取构建工厂
-│   ├── time_domain.py    # 1D 核心时域韵律及音质特征 (F0, RMS, ZCR, Jitter/Shimmer 等)
-│   └── freq_domain.py    # 2D 频谱及高阶动态特征 (MFCC, 谱质心, 滚降, 平坦度等)
-└── README.md             # 架构文档及 API 规范说明（本文档）
+## 1. 模块概述 (Overview)
+
+### 1.1 设计目标
+
+本模块为 SER 任务提供灵活的数据管道，核心特性：
+
+- **配置驱动**：通过 YAML 配置文件控制数据集行为，无需修改代码
+- **懒加载**：支持片段级音频加载，避免长音频的内存开销
+- **多级增强**：波形级 → 谱图级 → 批次级的三层增强架构
+- **多策略对齐**：支持固定长度填充、动态掩码、滑动窗口三种批处理策略
+
+### 1.2 数据集类型
+
+| 数据集类 | 输出格式 | 适用模型 | 配置模板 |
+|---------|---------|---------|---------|
+| `WaveformDataset` | 原始波形 `[T]` | Wav2Vec2, HuBERT, RawNet | `waveform_dataset.yaml` |
+| `SpectrogramDataset` | 单一谱图 `[Freq, T]` | 2D CNN (ResNet, EfficientNet) | `spectrogram_dataset.yaml` |
+| `FeatureDataset` | 多特征字典 `{name: Tensor}` | 自定义特征融合架构 | `feature_dataset.yaml` |
+
+### 1.3 支持的数据集
+
+当前已配置 **CASIA** 中文情感语音库：
+
+| 属性 | 值 |
+|-----|-----|
+| 总样本数 | 1200 |
+| 总时长 | 0.64 小时 (2286.78 秒) |
+| 说话人数 | 4 人 |
+| 情感类别 | 6 类 |
+| 数据划分 | Train: 900 / Val: 150 / Test: 150 |
+
+**情感标签映射：**
+
+| ID | 英文 | 中文 |
+|----|------|------|
+| 0 | Neutral | 平静 |
+| 1 | Happy | 高兴 |
+| 2 | Angry | 愤怒 |
+| 3 | Sad | 悲伤 |
+| 4 | Surprise | 惊吓 |
+| 5 | Fear | 恐惧 |
+
+---
+
+## 2. 预处理与特征工程 (Preprocessing & Feature Extraction)
+
+### 2.1 音频加载流水线
+
+```
+Audio File (.wav)
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  BaseConfigDataset._load_waveform()                     │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │ 1. 片段级懒加载 (可选)                           │   │
+│  │    - frame_offset = start_time_ms / 1000 * sr   │   │
+│  │    - num_frames = (end - start) / 1000 * sr     │   │
+│  ├─────────────────────────────────────────────────┤   │
+│  │ 2. 单声道转换                                    │   │
+│  │    waveform = mean(channels, dim=0, keepdim=True)│   │
+│  ├─────────────────────────────────────────────────┤   │
+│  │ 3. 重采样到目标采样率                            │   │
+│  │    T.Resample(orig_sr → target_sr)              │   │
+│  └─────────────────────────────────────────────────┘   │
+│  Output: Tensor[1, T]                                  │
+└─────────────────────────────────────────────────────────┘
+```
+
+**核心参数：**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `target_sr` | 16000 Hz | 全局统一目标采样率 |
+| `start_time_ms` | 0 | 片段起始时间（元数据字段） |
+| `end_time_ms` | None | 片段结束时间（元数据字段） |
+
+### 2.2 特征提取参数
+
+**谱图特征核心参数：**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `n_fft` | 1024 | FFT 窗口大小 |
+| `win_length` | 400 | 窗函数长度 |
+| `hop_length` | 256 | 帧移步长 |
+| `n_mels` | 80 | Mel 滤波器组数量 |
+| `f_min` | 0.0 Hz | 最低频率 |
+| `f_max` | 8000.0 Hz | 最高频率 |
+| `power` | 2.0 | 能量谱指数 |
+| `top_db` | 80.0 | Log-Mel 动态范围裁剪 |
+
+**时域韵律特征参数：**
+
+| 特征 | 关键参数 | 说明 |
+|------|----------|------|
+| F0 | `freq_low=50, freq_high=800` | 基频检测范围 |
+| RMS | `win_length=400, hop_length=256` | 短时能量 |
+| ZCR | `win_length=400, hop_length=256` | 过零率 |
+
+### 2.3 支持的特征类型
+
+**谱图类特征 (`features/spectrogram.py`)：**
+
+| 类型 | 输出维度 | 说明 |
+|------|----------|------|
+| `Spectrogram` | `[Freq, T]` | 线性谱图 |
+| `MelSpectrogram` | `[n_mels, T]` | Mel 谱图 |
+| `LogMelSpectrogram` | `[n_mels, T]` | Log-Mel 谱图（经 AmplitudeToDB） |
+| `MFCC` | `[n_mfcc, T]` | Mel 频率倒谱系数 |
+
+**时域特征 (`features/time_domain.py`)：**
+
+| 特征 | 输出维度 | 说明 |
+|------|----------|------|
+| `F0` | `[1, T]` | 基频（基于 NCCF 算法） |
+| `RMS` | `[1, T_frames]` | 短时能量 |
+| `ZCR` | `[1, T_frames]` | 过零率 |
+| `JitterShimmerHNR` | `[3]` | 音质特征（语句级标量） |
+
+**频域特征 (`features/freq_domain.py`)：**
+
+| 特征 | 输出维度 | 说明 |
+|------|----------|------|
+| `SpectralCentroid` | `[B, Time]` | 谱质心（声音明亮度） |
+| `SpectralRolloff` | `[B, Time]` | 谱滚降（85% 能量阈值频率） |
+| `SpectralFlatness` | `[B, Time]` | 谱平坦度（纯音 vs 噪声） |
+| `SpectralFlux` | `[B, Time]` | 谱通量（起音检测） |
+| `Delta` | `[B, C*3, Time]` | 一阶/二阶差分拼接 |
+
+---
+
+## 3. 数据结构与维度 (Data Structures & Shapes)
+
+### 3.1 单样本输出格式
+
+**`__getitem__` 返回值：**
+
+```python
+Tuple[Dict[str, torch.Tensor], torch.Tensor, int]
+#     ↑ features_dict      ↑ label      ↑ seq_length
+```
+
+| 数据集类 | features_dict 内容 | seq_length 含义 |
+|---------|-------------------|-----------------|
+| `WaveformDataset` | `{"raw_waveform": [T]}` | 采样点数 |
+| `SpectrogramDataset` | `{"<spec_type>": [Freq, T]}` | 时间帧数 |
+| `FeatureDataset` | `{"f0": [T], "rms": [T], ...}` | 首个特征的时间帧数 |
+
+### 3.2 批处理输出格式
+
+**`collate_fn` 返回值：**
+
+```python
+Tuple[Dict[str, Any], torch.Tensor]
+#     ↑ batch_dict        ↑ labels [B]
+```
+
+**策略一：`truncate_pad`（固定长度）**
+
+适用于 2D CNN 模型，输出固定尺寸张量：
+
+```python
+{
+    'x': {
+        '<feature_name>': Tensor[B, 1, Freq, T_fixed]  # 自动添加 Channel 维度
+    }
+}
+```
+
+- 超过 `max_frames` 的截断，不足的右侧补零
+- 默认 `max_frames=300`（约 3 秒语音）
+
+**策略二：`dynamic_mask`（动态长度）**
+
+适用于 Transformer 类模型，输出变长序列 + 注意力掩码：
+
+```python
+{
+    'x': {
+        '<feature_name>': Tensor[B, T_max, D]  # 转置为 [B, Time, Feature_dim]
+    },
+    'mask': Tensor[B, T_max]  # True=真实数据, False=填充区域
+}
+```
+
+**策略三：`sliding_window`（滑动窗口）**
+
+适用于长音频评估，按窗口切分后投票：
+
+```python
+{
+    'x': {
+        '<feature_name>': Tensor[B_expanded, 1, Freq, window_size]
+    },
+    'window_counts': Tensor[B],        # 每个原始样本展开的窗口数
+    'original_labels': Tensor[B]       # 原始标签（用于投票聚合）
+}
+```
+
+- 默认 `window_size=300, stride=150`（50% 重叠）
+
+### 3.3 数据流完整维度变化
+
+以 `SpectrogramDataset` + `truncate_pad` 为例：
+
+```
+原始音频文件 (.wav)
+    │
+    ▼ _load_waveform()
+Tensor[1, T_samples]           # T_samples = duration * 16000
+    │
+    ▼ 时域增强 (可选)
+Tensor[1, T_samples]
+    │
+    ▼ LogMelSpectrogram 提取
+Tensor[1, n_mels, T_frames]    # T_frames = T_samples / hop_length
+    │
+    ▼ 频域增强 (可选)
+Tensor[1, n_mels, T_frames]
+    │
+    ▼ squeeze(0) → _load_item() 返回
+Tensor[n_mels, T_frames]
+    │
+    ▼ collate_fn (truncate_pad)
+Tensor[B, 1, n_mels, max_frames]
 ```
 
 ---
 
-## 核心类：`BaseConfigDataset`
+## 4. 核心类与方法 (Core Classes & Methods)
 
-继承自 `torch.utils.data.Dataset` 的主体类，实现单样本的独立闭环管理。
+### 4.1 类继承结构
 
-### 属性 (Attributes)
+```
+torch.utils.data.Dataset
+        │
+        └── BaseConfigDataset (抽象基类)
+                │
+                ├── WaveformDataset
+                │
+                ├── SpectrogramDataset
+                │
+                └── FeatureDataset
+```
 
-- `split` (`str`): 数据集划分 ('train', 'val', 'test')。
-- `config` (`dict`): 解析后的总 YAML 配置字典。
-- `target_sr` (`int`): 全局目标采样率，音频加载时自动 Resample 依据。
-- `data_root_dir` (`str` | `None`): 配置中定义的音频物理根路径前缀，用于拼接相对路径。
-- `data_list` (`List[dict]`): 解析完成的核心元数据列表，每个元素对应一个语音切片（参见 `_load_data_list` 格式）。
-- `id2label` (`dict`): 从配置文件初始化的分类映射对象，供输出日志和 UI 图例使用。具体结构如下：
-  ```python
-  {
-      0: {"en": "Neutral", "zh": "平静"},
-      1: {"en": "Happy", "zh": "高兴"},
-      # ...
-  }
-  ```
-- `wave_transform` (`Optional[Callable]`): 基于函数的波形级增强流程（第1级增强，来自 `augment/time_domain.py`）。
-- `adv_wave_transform` (`Optional[Callable]`): 保留给复杂噪声注入操作的波形增强接口（第1高级增强，来自 `augment/time_domain.py`）。
-- `spec_transform` (`Optional[torch.nn.Module]`): `torchaudio.transforms` 实现的频谱增强容器（如 SpecAugment，第2级增强，来自 `augment/freq_domain.py`）。
-- `feature_extractors` (`torch.nn.ModuleDict`): 核心特征提取器映射字典，能够根据配置文件反射组装多种类型的提取管线。
-  
-### 核心方法 (Methods)
+### 4.2 BaseConfigDataset
 
-#### `__init__(self, config_path: str, split: str = 'train')`
-初始化数据并解析所有计算算子。
-- **输入**:
-  - `config_path` (`str`): `yaml` 配置文件的物理绝对或相对路径。
-  - `split` (`str`): 取值限定为 `'train'`, `'val'`, 甚至 `'test'`。
-- **业务逻辑**: 载入对应 `split` 下的 `json/jsonl` 表单，使用 `augment` 和 `features` 包内的构建器初始化所有的增广流水和 `feature_extractors` 对象。
+**文件：** `base_dataset.py`
 
-#### `_load_data_list(self, list_path: str) -> List[dict]`
-- **输入**: 数据清单文件路径 `list_path`。
-- **输出**: 解析完毕的元数据字典列表。其中单行字典保证包含以下字段（依赖外界数据预处理脚本 `casia_process.py` 输入格式）:
-  ```python
-  {
-      "audio_path": "相对路径或绝对路径", 
-      "label": int_id, 
-      "start_time_ms": int, # [可选] 默认 0
-      "end_time_ms": int    # [可选] 默认 None
-  }
-  ```
+**职责：** 配置解析、数据列表加载、音频懒加载、重采样管理
 
-#### `__getitem__(self, idx: int) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, int]`
-单点样本拉取总控。
-- **业务逻辑**: 触发指针对长音频的 OOM 级懒加载读取与重采样 -> 单声道融合 -> 波形增强 (`wave_transform`) -> 触发多模态特征并发提取 (`feature_extractors`) 及频谱级增强掩码 (`spec_transform`) -> 计算出最终产物有效长度。
-- **输出**: 包含三元素元组：
-  - `extracted_features` (`Dict[str, torch.Tensor]`): 该样本提取出的特征包裹字典。结构依据 YAML 决定。
-    > 假设配置中有 `log_mel` 和 `raw_waveform`：
-    > `{ "log_mel": Tensor[F, T], "raw_waveform": Tensor[T] }` （张量被去除了 batch 占位维度）
-  - `label` (`torch.Tensor`): `long` 类型，1D target。
-  - `seq_length` (`int`): 该序列实际通过特征器映射后的时间维度大小 `T`，为后续 Attention 或 RNN 补零提供长度依据。
+**核心属性：**
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `split` | `str` | 数据集划分 (`'train'`/`'val'`/`'test'`) |
+| `config` | `dict` | 解析后的 YAML 配置 |
+| `target_sr` | `int` | 目标采样率 |
+| `data_list` | `List[dict]` | 元数据列表 |
+| `id2label` | `dict` | 标签 ID → 名称映射 |
+| `resamplers` | `Dict[int, nn.Module]` | 采样率 → 重采样器缓存 |
+
+**核心方法：**
+
+| 方法 | 入参 | 出参 | 说明 |
+|------|------|------|------|
+| `__init__` | `config_path: str, split: str` | - | 初始化配置与数据列表 |
+| `__len__` | - | `int` | 返回样本总数 |
+| `__getitem__` | `idx: int` | `Tuple[Dict, Tensor, int]` | 获取单样本 |
+| `_load_waveform` | `item: dict` | `Tensor[1, T]` | 懒加载音频波形 |
+| `_load_item` | `waveform: Tensor, item: dict` | `Tuple[Dict, int]` | **抽象方法**，子类实现 |
+| `get_labels` | - | `List[int]` | 返回全部标签（用于类别权重计算） |
+
+**`_load_waveform` 实现细节：**
+
+```python
+def _load_waveform(self, item: dict) -> torch.Tensor:
+    # 1. 路径解析（支持相对路径拼接 data_root_dir）
+    audio_path = item['audio_path']
+
+    # 2. 片段级加载（避免长音频内存开销）
+    if start_time_ms > 0 or end_time_ms is not None:
+        frame_offset = int((start_time_ms / 1000.0) * orig_sr)
+        num_frames = int(((end_time_ms - start_time_ms) / 1000.0) * orig_sr)
+        waveform, sr = torchaudio.load(audio_path, frame_offset, num_frames)
+
+    # 3. 单声道转换
+    if waveform.shape[0] > 1:
+        waveform = torch.mean(waveform, dim=0, keepdim=True)
+
+    # 4. 重采样（带缓存）
+    if sr != self.target_sr:
+        if sr not in self.resamplers:
+            self.resamplers[sr] = T.Resample(sr, self.target_sr)
+        waveform = self.resamplers[sr](waveform)
+
+    return waveform  # [1, T]
+```
+
+### 4.3 WaveformDataset
+
+**文件：** `waveform_dataset.py`
+
+**职责：** 加载原始波形，应用时域增强，不做特征提取
+
+**`_load_item` 实现：**
+
+| 入参 | 类型 | 说明 |
+|------|------|------|
+| `waveform` | `Tensor[1, T]` | 原始波形 |
+| `item` | `dict` | 元数据（未使用） |
+
+| 出参 | 类型 | 说明 |
+|------|------|------|
+| `features` | `Dict[str, Tensor]` | `{"raw_waveform": Tensor[T]}` |
+| `seq_length` | `int` | 采样点数 |
+
+```python
+def _load_item(self, waveform, item):
+    if self.wave_transform:
+        waveform = self.wave_transform(waveform)
+    if self.adv_wave_transform:
+        waveform = self.adv_wave_transform(waveform)
+    raw = waveform.squeeze(0)  # [T]
+    return {"raw_waveform": raw}, raw.shape[-1]
+```
+
+### 4.4 SpectrogramDataset
+
+**文件：** `spectrogram_dataset.py`
+
+**职责：** 提取单一谱图特征，支持频域增强
+
+**核心属性：**
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `spec_type_name` | `str` | 谱图类型名称 |
+| `extractor` | `nn.Module` | 谱图提取器 |
+| `wave_transform` | `nn.Module` | 时域增强流水线 |
+| `spec_transform` | `nn.Module` | 频域增强流水线 |
+
+**`_load_item` 实现：**
+
+| 入参 | 类型 | 说明 |
+|------|------|------|
+| `waveform` | `Tensor[1, T]` | 原始波形 |
+| `item` | `dict` | 元数据（未使用） |
+
+| 出参 | 类型 | 说明 |
+|------|------|------|
+| `features` | `Dict[str, Tensor]` | `{spec_type_name.lower(): Tensor[Freq, T]}` |
+| `seq_length` | `int` | 时间帧数 |
+
+```python
+def _load_item(self, waveform, item):
+    # 1. 时域增强
+    if self.wave_transform:
+        waveform = self.wave_transform(waveform)
+    if self.adv_wave_transform:
+        waveform = self.adv_wave_transform(waveform)
+
+    # 2. 谱图提取
+    feat = self.extractor(waveform)
+
+    # 3. 频域增强
+    if self.spec_transform:
+        feat = self.spec_transform(feat)
+
+    feat = feat.squeeze(0)  # [Freq, T]
+    return {self.spec_type_name.lower(): feat}, feat.shape[-1]
+```
+
+### 4.5 FeatureDataset
+
+**文件：** `feature_dataset.py`
+
+**职责：** 多特征并发提取，按字典返回，不强制拼接
+
+**核心属性：**
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `extractors` | `nn.ModuleDict` | 特征名 → 提取器映射 |
+
+**`_load_item` 实现：**
+
+| 入参 | 类型 | 说明 |
+|------|------|------|
+| `waveform` | `Tensor[1, T]` | 原始波形 |
+| `item` | `dict` | 元数据（未使用） |
+
+| 出参 | 类型 | 说明 |
+|------|------|------|
+| `features` | `Dict[str, Tensor]` | 多特征字典 |
+| `seq_length` | `int` | 首个特征的时间帧数 |
+
+```python
+def _load_item(self, waveform, item):
+    # 1. 时域增强
+    if self.wave_transform:
+        waveform = self.wave_transform(waveform)
+    if self.adv_wave_transform:
+        waveform = self.adv_wave_transform(waveform)
+
+    # 2. 逐特征提取
+    features = {}
+    for feat_name, extractor in self.extractors.items():
+        feat = extractor(waveform).squeeze(0)
+        features[feat_name] = feat
+
+    seq_length = list(features.values())[0].shape[-1]
+    return features, seq_length
+```
+
+### 4.6 build_collate_fn
+
+**文件：** `collate.py`
+
+**职责：** 根据配置生成批处理函数
+
+**入参：**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `config` | `dict` | 解析后的 YAML 配置 |
+
+**出参：**
+
+| 类型 | 说明 |
+|------|------|
+| `Callable` | 供 `DataLoader` 使用的 `collate_fn` |
+
+**配置项：**
+
+```yaml
+audio_processing:
+  strategy: "truncate_pad"  # truncate_pad | dynamic_mask | sliding_window
+  max_frames: 300           # truncate_pad 专用
+  window_size: 300          # sliding_window 专用
+  stride: 150
+```
 
 ---
 
-## 核心工厂类文件: `collate.py`
+## 5. 数据增强 (Data Augmentation)
 
-由于长短不一的数据组装需要定制化处理维度对齐，将所有的合批逻辑（Padding、动态掩码以及切窗操作）抽离为独立服务组件 `build_collate_fn` 存于此文件。
+### 5.1 增强层级架构
 
-#### `build_collate_fn(config: dict) -> Callable`
-- **输入**: 载入内存全局验证过的 `Yaml` 字典描述符。
-- **输出**: 挂载有策略控制执行环境闭包的 `collate_fn` 方法引用。
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Level 1: waveform_level (时域基础增强)                      │
+│  ├─ AddGaussianNoise  (SNR 控制)                            │
+│  ├─ PitchShift        (音调偏移)                            │
+│  ├─ TimeStretch       (变速不变调)                          │
+│  ├─ TimeShift         (时间平移)                            │
+│  └─ VolumeScale       (音量缩放)                            │
+├─────────────────────────────────────────────────────────────┤
+│  Level 2: advanced_waveform_level (时域高级增强)             │
+│  ├─ RIRSimulation     (房间冲激响应混响)                     │
+│  └─ DynamicSNRMixing  (动态背景噪声混合)                     │
+├─────────────────────────────────────────────────────────────┤
+│  Level 3: spectrogram_level (频域增强)                       │
+│  ├─ SpecMasking       (SpecAugment: 时频掩码)               │
+│  ├─ FilterAugment     (随机频带滤波)                        │
+│  └─ VTLP               (声道长度扰动)                        │
+├─────────────────────────────────────────────────────────────┤
+│  Level 4: batch_level (批次级增强)                           │
+│  └─ Mixup             (样本混合 + 软标签)                    │
+└─────────────────────────────────────────────────────────────┘
+```
 
-### 返回的闭包方法: `collate_fn(batch)`
-这是 DataLoader 每隔批次执行的真正合并逻辑函数。
-- **输入**: 一笔数据清单 (`batch`)。结构为 `List[Tuple[Dict, Tensor, Int]]`（对应着由 `__getitem__` 吐出的元组数组）。
-- **业务逻辑**: 基于 `audio_processing` 块配置产生对应的维数转换规则。包含目前 3 种主流策略的分水岭设计:
-  
-  1. **策略 `"truncate_pad"`**:
-     - 从 `config` 获取 `max_frames` 常量。
-     - 大于截断，短于前向填充右零补齐。
-     - 为二维特征增加通道 `[B, 1, Freq, Time]` 以兼容 `Conv2D` 二维卷积算子。
-  
-  2. **策略 `"dynamic_mask"`**:
-     - 通过比对找出当前所有该 `Batch` 中输入序列的 Max 时间轴长度。由于是完全基于当前块的长短做局部动态 Padding（无常量约束）。
-     - 发行全局二进制 `boolean Mask Matrix (Attention Mask)`。
-     - 调换轴为 Transformer 模型标准长列流: `[Batch, Time, Feature_dim]`。
-     
-  3. **策略 `"sliding_window"`** *(专为系统侧长语音不规整测试集与模型投票服务)*:
-     - 不做整体缩放，依靠预先计算传入的 `stride` 与跨度对超长片段在最后的时间轴层层平移，物理开片为更细粒度的窗口数组集合 `all_windows`。
-     - 对最终拉直展宽的模型侧特征维度，同频统计产出 `window_counts`（表明当前样本被裂变出了 N 份 window 切片），以及被复制 N 份一一映射的张量新伪目标 `expanded_labels`。
+### 5.2 时域增强类 (`augment/time_domain.py`)
 
-- **输出 (依据策略异构返回以下字段集)**:
-  - 正常返回示例（如遇到 `truncate_pad`）:
-     ```python
-     (
-         {'x': {'log_mel': Tensor(B, 1, F, T)}},
-         labels: Tensor(B,)
-     )
-     ```
-  - 特殊推理投票返回（如开启 `sliding_window`）：
-     ```python
-     (
-         {
-             'x': {'log_mel': Tensor(Total_Windows, 1, F, T)}, 
-             'window_counts': Tensor(B,),         # 每个文件原始对应的切片分配长度
-             'original_labels': Tensor(B,)        # 原生长度用于计算投票通过率评比的标签集
-         },
-         labels: Tensor(Total_Windows,)  # 扩展开拉直的标签
-     )
-     ```
+| 类名 | 核心参数 | 说明 |
+|------|----------|------|
+| `AddGaussianNoise` | `snr=15.0, p=0.5` | 按 SNR 注入高斯白噪声 |
+| `PitchShift` | `n_steps=4, p=0.5` | 音调偏移（半音阶），使用 Phase Vocoder |
+| `TimeStretch` | `rate=1.2, p=0.5` | 变速不变调，需 STFT → Phase Vocoder → ISTFT |
+| `TimeShift` | `shift_max_ratio=0.2, p=0.5` | 时间平移，空缺处补零 |
+| `VolumeScale` | `gain_min=0.5, gain_max=1.5, p=0.5` | 随机音量缩放 |
+| `RIRSimulation` | `rir_path, p=0.5` | 房间冲激响应混响（需外部 RIR 数据库） |
+| `DynamicSNRMixing` | `noise_dataset_path, p=0.5` | 动态背景噪声混合（需外部噪声库） |
+
+### 5.3 频域增强类 (`augment/freq_domain.py`)
+
+| 类名 | 核心参数 | 说明 |
+|------|----------|------|
+| `SpecMasking` | `time_mask_param=30, freq_mask_param=15, p=0.5` | SpecAugment 时频掩码 |
+| `FilterAugment` | `n_band=1, db_range=(-5, 5), p=0.5` | 随机频带增益（Log-Mel 域加法） |
+| `VTLP` | `warp_factor_range=(0.9, 1.1), p=0.5` | 声道长度扰动（频率轴拉伸） |
+| `SpecMix` | `p=0.5` | CutMix（需在 batch_level 实现） |
+
+### 5.4 配置示例
+
+```yaml
+transforms:
+  waveform_level:
+    train:
+      - type: "AddGaussianNoise"
+        snr: 15.0
+        p: 0.5
+      - type: "TimeStretch"
+        rate: 1.2
+        p: 0.3
+    val: []
+    test: []
+
+  spectrogram_level:
+    train:
+      - type: "SpecMasking"
+        time_mask_param: 40
+        freq_mask_param: 15
+        p: 0.5
+    val: []
+    test: []
+```
 
 ---
 
-## 进阶组件库
+## 6. 配置文件规范 (Configuration Schema)
 
-### 1. `augment/` 数据增强算子包
+### 6.1 数据集配置结构
 
-包含在音频不同空间状态下的正则化与泛化防御算子。流水线的装配由 `augment/builder.py` 工厂对外统一暴露。
+```yaml
+# 元数据
+dataset_name: "CASIA"
+num_classes: 6
+class_mapping:
+  0: { en: "Neutral", zh: "平静" }
+  1: { en: "Happy", zh: "高兴" }
+  # ...
 
-#### `augment/time_domain.py`
-针对 1D `Waveform` 浮点数张量进行物理信号层面的扰乱操作。包含：
-- `AddGaussianNoise(snr, p)`: 注入受控信噪比的高斯白噪，增强对低信噪比环境的鲁棒性。
-- `PitchShift(sample_rate, n_steps, p)`: 进行音高偏移（支持 Torchaudio 内置特征，降级使用重采样），模拟说话人情感张力波动。
-- `TimeStretch(rate, p)`: 使用相位声码器支持的时间拉伸（不变调），模拟不同语速。
-- `TimeShift(shift_max_ratio, p)`: 时间轴上的伪平移截断对齐补零机制。
-- `VolumeScale(gain_min, gain_max, p)`: 音量按随机倍率浮动缩放。
-- *(预留)* `RIRSimulation` 和 `DynamicSNRMixing`: 高级环境混响与背景噪声源混合（课程高阶预留）。
+# 路径配置
+paths:
+  metadata_dir: "ser_lib/dataset/configs/casia"  # JSONL 文件目录
+  data_root_dir: "data/CASIA"                    # 音频文件根目录
 
-#### `augment/freq_domain.py`
-针对经过特征提取的 2D `Spectrogram` 进行谱域能量平面的扰动：
-- `SpecMasking(time_mask_param, freq_mask_param, p)`: 原生 SpecAugment，时频二维涂抹抹零正则化。
-- `FilterAugment(n_band, db_range, band_width_ratio, p)`: 频段截断掩盖的柔和拉伸版本。
-- `VTLP(warp_factor_range, p)`: 声道长度扰动，针对频谱频率轴的特征缩放近似。
-- *(预留)* `SpecMix(p)`: 批次级 (Batch-level) 拼图特征增强。
+data_lists:
+  train: "train.jsonl"
+  val: "val.jsonl"
+  test: "test.jsonl"
+
+# 音频参数
+audio:
+  target_sr: 16000
+
+# 批处理策略
+audio_processing:
+  strategy: "truncate_pad"
+  max_frames: 300
+  window_size: 300
+  stride: 150
+
+# 特征配置 (SpectrogramDataset 专用)
+spectrogram:
+  type: "LogMelSpectrogram"
+  kwargs:
+    n_fft: 1024
+    hop_length: 256
+    n_mels: 80
+    f_min: 0.0
+    f_max: 8000.0
+
+# 或多特征配置 (FeatureDataset 专用)
+features:
+  selected_features:
+    f0: { type: "F0" }
+    rms: { type: "RMS" }
+    zcr: { type: "ZCR" }
+
+# 数据增强
+transforms:
+  waveform_level: { train: [], val: [], test: [] }
+  spectrogram_level: { train: [], val: [], test: [] }
+  batch_level: { train: [] }
+```
+
+### 6.2 JSONL 元数据格式
+
+每行一个 JSON 对象：
+
+```json
+{
+  "audio_path": "speaker1/angry_001.wav",
+  "label": 2,
+  "emotion_text": "angry",
+  "speaker_id": "liuchanhg",
+  "duration": 1.79,
+  "start_time_ms": 0,
+  "end_time_ms": 1790
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `audio_path` | `str` | ✓ | 音频文件路径（相对或绝对） |
+| `label` | `int` | ✓ | 情感类别 ID |
+| `emotion_text` | `str` | | 情感文本标签 |
+| `speaker_id` | `str` | | 说话人 ID |
+| `duration` | `float` | | 音频时长（秒） |
+| `start_time_ms` | `int` | | 片段起始时间（毫秒） |
+| `end_time_ms` | `int` | | 片段结束时间（毫秒） |
 
 ---
 
-### 2. `features/` 多模态特征提取包
+## 7. 使用示例 (Usage Examples)
 
-项目解耦的底层特征计算模块栈。通过 `features/builder.py` 内部工厂可灵活地实例化并在不同网络拓扑中任意组合。支持包括传统声学特征、时频能量、以及发音人微观病理学等超过 10 种特征计算过程。
+### 7.1 基础用法
 
-#### `features/time_domain.py`
-1D 本源时域/韵律及音质解析器：
-- **韵律类**:
-  - `PitchF0`: 基于 NCCF 的短时高精度基频抽取，直观表征情绪起伏与发音张力。
-  - `RMS`: 短时能量均方根获取，代表信号的绝对声压或感知响度激荡。
-  - `ZeroCrossingRate (ZCR)`: 信号过零速率评估，刻画清音、爆破音密度比例及含噪量。
-- **音质类**:
-  - `JitterShimmerHNR`: 联合计算依赖周期的声带微观抖动与谐波噪比 (仅基础实现)。
+```python
+from torch.utils.data import DataLoader
+from ser_lib.dataset.spectrogram_dataset import SpectrogramDataset
+from ser_lib.dataset.collate import build_collate_fn
 
-#### `features/freq_domain.py`
-基于短时傅里叶变换及其衍生映射谱面的 2D 系特征算子：
-- `MFCC`: 经典的声学倒谱系数表示通道内涵。
-- `SpectralCentroid`: 频谱质心计算，量化情感频带的中心点转移规律。
-- `SpectralRolloff`: 85%能量截断点频标提取。
-- `SpectralFlatness`: 量化频带内的平坦几何与算数平均离散程度。
-- `SpectralFlux`: 计算谱级一阶时间差分能量激变值，追踪起音与截音。
-- `ComputeDeltas`: 附带挂件，可为任意基础二维特征矩阵增加一阶差分 (Delta) 与二阶差分 (Delta-Delta) 通道层级。
+# 初始化数据集
+dataset = SpectrogramDataset(
+    config_path="ser_lib/dataset/configs/casia.yaml",
+    split="train"
+)
+
+# 构建 DataLoader
+collate_fn = build_collate_fn(dataset.config)
+dataloader = DataLoader(
+    dataset,
+    batch_size=32,
+    shuffle=True,
+    collate_fn=collate_fn,
+    num_workers=4
+)
+
+# 迭代训练
+for batch, labels in dataloader:
+    # batch['x']['melspectrogram']: [B, 1, 80, 300]
+    # labels: [B]
+    pass
+```
+
+### 7.2 获取类别权重
+
+```python
+from torch.utils.data import WeightedRandomSampler
+import numpy as np
+
+labels = dataset.get_labels()
+class_counts = np.bincount(labels)
+class_weights = 1.0 / class_counts
+sample_weights = [class_weights[l] for l in labels]
+
+sampler = WeightedRandomSampler(
+    weights=sample_weights,
+    num_samples=len(dataset),
+    replacement=True
+)
+```
+
+---
+
+## 8. 文件结构 (File Structure)
+
+```
+ser_lib/dataset/
+├── base_dataset.py          # 抽象基类
+├── waveform_dataset.py      # 原始波形数据集
+├── spectrogram_dataset.py   # 谱图数据集
+├── feature_dataset.py       # 多特征数据集
+├── collate.py               # 批处理函数工厂
+├── augment/
+│   ├── builder.py           # 增强流水线构建器
+│   ├── time_domain.py       # 时域增强类
+│   └── freq_domain.py       # 频域增强类
+├── features/
+│   ├── builder.py           # 特征提取器工厂
+│   ├── spectrogram.py       # 谱图提取器
+│   ├── time_domain.py       # 时域特征提取器
+│   └── freq_domain.py       # 频域特征提取器
+├── configs/
+│   ├── casia.yaml           # CASIA 数据集配置
+│   └── casia/
+│       ├── train.jsonl      # 训练集元数据
+│       ├── val.jsonl        # 验证集元数据
+│       └── test.jsonl       # 测试集元数据
+├── waveform_dataset.yaml    # WaveformDataset 配置模板
+├── spectrogram_dataset.yaml # SpectrogramDataset 配置模板
+└── feature_dataset.yaml     # FeatureDataset 配置模板
+```

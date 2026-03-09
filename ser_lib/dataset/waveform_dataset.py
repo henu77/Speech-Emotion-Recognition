@@ -34,10 +34,33 @@ class WaveformDataset(BaseConfigDataset):
         )
 
     def _load_item(self, waveform: torch.Tensor, item: dict) -> Tuple[Dict[str, torch.Tensor], int]:
+        # 维度检查：输入波形应为 [1, T] 或 [C, T]
+        assert waveform.dim() == 2, (
+            f"[WaveformDataset._load_item] 输入波形维度错误: 期望 2D [1, T], 实际 {waveform.dim()}D {tuple(waveform.shape)}"
+        )
+
         if self.wave_transform:
             waveform = self.wave_transform(waveform)
         if self.adv_wave_transform:
             waveform = self.adv_wave_transform(waveform)
 
+        # 维度检查：增强后波形仍应为 2D
+        assert waveform.dim() == 2, (
+            f"[WaveformDataset._load_item] 增强后波形维度错误: 期望 2D [1, T], 实际 {waveform.dim()}D {tuple(waveform.shape)}"
+        )
+
         raw = waveform.squeeze(0)  # [T]
-        return {"raw_waveform": raw}, raw.shape[-1]
+
+        # 维度检查：输出波形应为 1D [T]
+        assert raw.dim() == 1, (
+            f"[WaveformDataset._load_item] 输出波形维度错误: 期望 1D [T], 实际 {raw.dim()}D {tuple(raw.shape)}"
+        )
+
+        seq_length = raw.shape[-1]
+
+        # 维度检查：seq_length 与波形长度一致性
+        assert seq_length == raw.shape[-1], (
+            f"[WaveformDataset._load_item] seq_length 不一致: seq_length={seq_length}, 波形长度={raw.shape[-1]}"
+        )
+
+        return {"raw_waveform": raw}, seq_length
