@@ -1,4 +1,5 @@
 import json
+import math
 import yaml
 import torchaudio
 from pathlib import Path
@@ -36,6 +37,10 @@ class DatasetProcessor:
         self.total_duration_sec = 0.0
         self.emotion_counts = {k: 0 for k in self.emotion_mapping.keys()}
         self.speaker_counts: Dict[str, int] = {}
+        self.duration_seconds: List[float] = []
+        self.duration_histogram: List[Dict[str, Any]] = []
+        self.duration_percentiles: Dict[str, float] = {}
+        self.recommended_audio_processing: Dict[str, Any] = {}
 
     def _build_base_config(self) -> Dict[str, Any]:
         """构建所有模板共享的基础配置。"""
@@ -166,6 +171,161 @@ class DatasetProcessor:
         }
         return config
 
+    def _summarize_duration_distribution(self, bin_width: float = 0.5) -> List[Dict[str, Any]]:
+        """统计音频时长分布及概率。"""
+        if not self.duration_seconds:
+            return []
+
+        histogram: Dict[int, int] = {}
+        for duration in self.duration_seconds:
+            bin_index = int(math.floor(duration / bin_width))
+            histogram[bin_index] = histogram.get(bin_index, 0) + 1
+
+        total = len(self.duration_seconds)
+        summary = []
+        for bin_index in sorted(histogram.keys()):
+            start = round(bin_index * bin_width, 3)
+            end = round((bin_index + 1) * bin_width, 3)
+            count = histogram[bin_index]
+            probability = count / total
+            summary.append(
+                {
+                    "range": f"[{start:.1f}, {end:.1f})s",
+                    "start": start,
+                    "end": end,
+                    "count": count,
+                    "probability": round(probability, 4),
+                }
+            )
+
+        return summary
+
+    def _compute_percentile(self, percentile: float) -> float:
+        """按时长从长到短累计，计算给定百分位数对应的时长（秒）。
+
+        说明：
+        - P50 表示从长到短累计 50% 样本时的时长阈值
+        - P90 表示从长到短累计 90% 样本时的时长阈值
+        - 与常见“从短到长”定义相比，这里等价于使用 (1 - percentile) 的升序分位点
+        """
+        if not self.duration_seconds:
+            return 0.0
+
+        sorted_durations = sorted(self.duration_seconds)
+        if len(sorted_durations) == 1:
+            return round(sorted_durations[0], 3)
+
+        ascending_percentile = 1.0 - percentile
+        position = (len(sorted_durations) - 1) * ascending_percentile
+        lower_idx = int(math.floor(position))
+        upper_idx = int(math.ceil(position))
+        lower = sorted_durations[lower_idx]
+        upper = sorted_durations[upper_idx]
+        interpolated = lower + (upper - lower) * (position - lower_idx)
+        return round(interpolated, 3)
+
+    def _summarize_duration_percentiles(self) -> Dict[str, float]:
+        """统计常用时长分位数。"""
+        if not self.duration_seconds:
+            return {}
+
+        return {
+            "p50": self._compute_percentile(0.50),
+            "p75": self._compute_percentile(0.75),
+            "p90": self._compute_percentile(0.90),
+            "p95": self._compute_percentile(0.95),
+            "max": round(max(self.duration_seconds), 3),
+        }
+
+    def _estimate_recommended_audio_processing(self) -> Dict[str, Any]:
+        """基于主体样本分布给出推荐的固定长度参数。
+
+        说明:
+        - compact: 更偏向主峰短样本，适合资源敏感场景
+        - balanced: 默认推荐，优先覆盖大多数主体样本
+        - conservative: 更保守，覆盖更多长尾样本
+        """
+        if not self.duration_percentiles or not self.duration_histogram:
+            return {}
+
+        target_sr = 16000
+        hop_length = 256
+
+        dominant_bucket = max(self.duration_histogram, key=lambda item: (item["count"], -item["start"]))
+        compact_seconds = self.duration_percentiles["p90"]
+        balanced_seconds = self.duration_percentiles["p75"]
+        conservative_seconds = self.duration_percentiles["p50"]
+
+        def seconds_to_frames(seconds: float) -> Dict[str, int]:
+            return {
+                "waveform_max_frames": int(math.ceil(seconds * target_sr)),
+                "spectrogram_max_frames": int(math.ceil(seconds * target_sr / hop_length)),
+            }
+
+        compact = seconds_to_frames(compact_seconds)
+        balanced = seconds_to_frames(balanced_seconds)
+        conservative = seconds_to_frames(conservative_seconds)
+
+        return {
+            "dominant_range": dominant_bucket["range"],
+            "compact_seconds": round(compact_seconds, 3),
+            "balanced_seconds": round(balanced_seconds, 3),
+            "conservative_seconds": round(conservative_seconds, 3),
+            "compact": compact,
+            "balanced": balanced,
+            "conservative": conservative,
+            "target_sr": target_sr,
+            "hop_length": hop_length,
+            "default_basis": "descending_p75",
+        }
+
+    def _print_duration_distribution(self):
+        """在控制台打印时长分布概览。"""
+        if not self.duration_histogram:
+            print("   - 时长分布：暂无可用统计")
+            return
+
+        print("   - 时长分布（按 0.5s 分桶）：")
+        for item in self.duration_histogram:
+            probability_pct = item["probability"] * 100
+            print(
+                f"     * {item['range']}: {item['count']} 条 "
+                f"({probability_pct:.1f}%)"
+            )
+
+    def _print_duration_percentiles(self):
+        """在控制台打印时长分位数与推荐配置。"""
+        if not self.duration_percentiles:
+            print("   - 时长分位数：暂无可用统计")
+            return
+
+        print(
+            "   - 时长分位数（从长到短累计）: "
+            f"P50={self.duration_percentiles['p50']:.3f}s, "
+            f"P75={self.duration_percentiles['p75']:.3f}s, "
+            f"P90={self.duration_percentiles['p90']:.3f}s, "
+            f"P95={self.duration_percentiles['p95']:.3f}s, "
+            f"Max={self.duration_percentiles['max']:.3f}s"
+        )
+
+        if self.recommended_audio_processing:
+            print(
+                "   - 主峰时长区间（概率最高）: "
+                f"{self.recommended_audio_processing['dominant_range']}"
+            )
+            print(
+                "   - 推荐固定长度参数: "
+                f"compact={self.recommended_audio_processing['compact_seconds']:.3f}s "
+                f"(waveform={self.recommended_audio_processing['compact']['waveform_max_frames']}, "
+                f"spectrogram={self.recommended_audio_processing['compact']['spectrogram_max_frames']}), "
+                f"balanced={self.recommended_audio_processing['balanced_seconds']:.3f}s "
+                f"(waveform={self.recommended_audio_processing['balanced']['waveform_max_frames']}, "
+                f"spectrogram={self.recommended_audio_processing['balanced']['spectrogram_max_frames']}), "
+                f"conservative={self.recommended_audio_processing['conservative_seconds']:.3f}s "
+                f"(waveform={self.recommended_audio_processing['conservative']['waveform_max_frames']}, "
+                f"spectrogram={self.recommended_audio_processing['conservative']['spectrogram_max_frames']})"
+            )
+
     def _prompt_choice(self, title: str, options: Dict[str, str], default: str) -> str:
         """通过命令行交互选择配置项。
 
@@ -212,9 +372,119 @@ class DatasetProcessor:
         """根据模式与模板类型构建与当前 schema 兼容的配置。"""
         if config_mode == "default":
             return self._build_default_dataset_config(template_type, strategy, spectrogram_type)
-        if config_mode == "custom":
+        if config_mode == "preset":
             return self._build_custom_dataset_config(template_type, strategy, spectrogram_type)
+        if config_mode == "manual":
+            return self._build_default_dataset_config(template_type, strategy, spectrogram_type)
         raise ValueError(f"未知配置模式: {config_mode}")
+
+    def _prompt_int(self, prompt: str, default: int) -> int:
+        """交互输入整数，支持回车使用默认值。"""
+        raw = input(f"{prompt} [{default}]: ").strip()
+        if not raw:
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            print(f"⚠️ 无效整数 '{raw}'，将使用默认值 {default}。")
+            return default
+
+    def _prompt_float(self, prompt: str, default: float) -> float:
+        """交互输入浮点数，支持回车使用默认值。"""
+        raw = input(f"{prompt} [{default}]: ").strip()
+        if not raw:
+            return default
+        try:
+            return float(raw)
+        except ValueError:
+            print(f"⚠️ 无效浮点数 '{raw}'，将使用默认值 {default}。")
+            return default
+
+    def _apply_manual_overrides(
+        self,
+        config: Dict[str, Any],
+        template_type: str,
+        strategy: str,
+    ) -> Dict[str, Any]:
+        """在 manual 模式下交互覆盖关键配置参数。"""
+        print("\n进入 manual 模式：你可以手动覆盖关键配置参数。直接回车表示使用当前值。")
+
+        audio_cfg = config.setdefault("audio", {})
+        audio_cfg["target_sr"] = self._prompt_int("请输入 target_sr", int(audio_cfg.get("target_sr", 16000)))
+
+        proc_cfg = config.setdefault("audio_processing", {})
+        proc_cfg["strategy"] = strategy
+
+        recommendation_choice = None
+        if self.recommended_audio_processing and strategy in {"truncate_pad", "sliding_window"}:
+            recommendation_choice = self._prompt_choice(
+                "是否使用时长统计推荐值预填长度参数？",
+                {
+                    "manual": "不使用推荐值，完全手动输入",
+                    "compact": "使用 compact 推荐值（更短、更省资源）",
+                    "balanced": "使用 balanced 推荐值（默认推荐）",
+                    "conservative": "使用 conservative 推荐值（更长、更保守）",
+                },
+                default="balanced",
+            )
+
+        def resolve_recommended_frame(key: str, current_default: int) -> int:
+            if recommendation_choice in {"compact", "balanced", "conservative"}:
+                return int(self.recommended_audio_processing[recommendation_choice][key])
+            return current_default
+
+        if strategy == "truncate_pad":
+            proc_cfg["max_frames"] = self._prompt_int(
+                "请输入 max_frames",
+                resolve_recommended_frame("spectrogram_max_frames" if template_type == "spectrogram" else "waveform_max_frames", int(proc_cfg.get("max_frames", 300))),
+            )
+        elif strategy == "sliding_window":
+            proc_cfg["window_size"] = self._prompt_int(
+                "请输入 window_size",
+                resolve_recommended_frame("spectrogram_max_frames" if template_type == "spectrogram" else "waveform_max_frames", int(proc_cfg.get("window_size", 300))),
+            )
+            proc_cfg["stride"] = self._prompt_int(
+                "请输入 stride",
+                int(proc_cfg.get("stride", 150)),
+            )
+        else:
+            print("dynamic_mask 模式不强制要求固定长度参数，保留当前默认值。")
+
+        if template_type == "spectrogram":
+            spec_cfg = config.setdefault("spectrogram", {})
+            kwargs = spec_cfg.setdefault("kwargs", {})
+            kwargs["sample_rate"] = audio_cfg["target_sr"]
+            kwargs["n_fft"] = self._prompt_int("请输入 spectrogram.n_fft", int(kwargs.get("n_fft", 1024)))
+            kwargs["win_length"] = self._prompt_int("请输入 spectrogram.win_length", int(kwargs.get("win_length", kwargs["n_fft"])))
+            kwargs["hop_length"] = self._prompt_int("请输入 spectrogram.hop_length", int(kwargs.get("hop_length", 256)))
+            if spec_cfg.get("type") in {"MelSpectrogram", "LogMelSpectrogram", "MFCC"}:
+                kwargs["n_mels"] = self._prompt_int("请输入 spectrogram.n_mels", int(kwargs.get("n_mels", 80)))
+            if spec_cfg.get("type") == "MFCC":
+                kwargs["n_mfcc"] = self._prompt_int("请输入 spectrogram.n_mfcc", int(kwargs.get("n_mfcc", 40)))
+            if spec_cfg.get("type") == "LogMelSpectrogram":
+                kwargs["top_db"] = self._prompt_float("请输入 spectrogram.top_db", float(kwargs.get("top_db", 80.0)))
+
+        if template_type == "feature":
+            selected = config.get("features", {}).get("selected_features", {})
+            for feat_name, feat_cfg in selected.items():
+                kwargs = feat_cfg.setdefault("kwargs", {})
+                if "hop_length" in kwargs:
+                    kwargs["hop_length"] = self._prompt_int(
+                        f"请输入特征 {feat_name}.hop_length",
+                        int(kwargs.get("hop_length", 256)),
+                    )
+                if "win_length" in kwargs:
+                    kwargs["win_length"] = self._prompt_int(
+                        f"请输入特征 {feat_name}.win_length",
+                        int(kwargs.get("win_length", 400)),
+                    )
+                if "n_fft" in kwargs:
+                    kwargs["n_fft"] = self._prompt_int(
+                        f"请输入特征 {feat_name}.n_fft",
+                        int(kwargs.get("n_fft", 1024)),
+                    )
+
+        return config
 
     def _build_dataset_config_interactive(self) -> Dict[str, Any]:
         """通过命令行交互式生成配置。"""
@@ -222,7 +492,8 @@ class DatasetProcessor:
             "请选择配置生成模式:",
             {
                 "default": "默认模板 - 使用框架推荐初始配置",
-                "custom": "自定义模板 - 允许子类生成数据集专属配置",
+                "preset": "预设模板 - 使用子类定义的数据集专属参数",
+                "manual": "手动模板 - 逐项输入关键参数",
             },
             default="default",
         )
@@ -278,6 +549,8 @@ class DatasetProcessor:
             )
 
         config = self._build_dataset_config(config_mode, template_type, strategy, spectrogram_type)
+        if config_mode == "manual":
+            config = self._apply_manual_overrides(config, template_type, strategy)
         config["_template_type"] = template_type
         config["_config_mode"] = config_mode
         return config
@@ -338,6 +611,7 @@ class DatasetProcessor:
                 
                 item["duration"] = round(duration, 3)
                 valid_samples.append(item)
+                self.duration_seconds.append(duration)
                 
                 # 更新全局内部统计钩子
                 self.total_duration_sec += duration
@@ -350,10 +624,15 @@ class DatasetProcessor:
                 print(f"⚠️ 跳过无效音频: {abs_path} | 原因: {e}")
                 
         self.all_data = valid_samples
+        self.duration_histogram = self._summarize_duration_distribution()
+        self.duration_percentiles = self._summarize_duration_percentiles()
+        self.recommended_audio_processing = self._estimate_recommended_audio_processing()
         print(f"📊 {self.dataset_name} 数据画像统揽：")
         print(f"   - 有效音频：{len(self.all_data)} 句")
         print(f"   - 总计时长：{self.total_duration_sec / 3600:.2f} 小时")
         print(f"   - 发音人数：{len(self.speaker_counts)} 人")
+        self._print_duration_distribution()
+        self._print_duration_percentiles()
         
         # 3. 数据隔离拆分
         splits = self._split_strategy(self.all_data)
@@ -395,6 +674,46 @@ class DatasetProcessor:
             rf.write(f"- **有效音频数**: {len(self.all_data)} 条\n")
             rf.write(f"- **总发声时长**: {self.total_duration_sec / 3600:.2f} 小时 ({self.total_duration_sec:.2f} 秒)\n")
             rf.write(f"- **覆盖说话人数**: {len(self.speaker_counts)} 人\n\n")
+            
+            rf.write("## 1.1 时长分布统计\n")
+            if self.duration_histogram:
+                for item in self.duration_histogram:
+                    rf.write(
+                        f"- **{item['range']}**: {item['count']} 条 "
+                        f"(概率 {item['probability'] * 100:.1f}%)\n"
+                    )
+            else:
+                rf.write("- 无可用时长统计\n")
+            rf.write("\n")
+
+            rf.write("## 1.2 时长分位数与推荐固定长度\n")
+            if self.duration_percentiles:
+                rf.write("- **分位数口径**: 从长到短累计统计\n")
+                rf.write(
+                    f"- **P50**: {self.duration_percentiles['p50']:.3f}s\n"
+                    f"- **P75**: {self.duration_percentiles['p75']:.3f}s\n"
+                    f"- **P90**: {self.duration_percentiles['p90']:.3f}s\n"
+                    f"- **P95**: {self.duration_percentiles['p95']:.3f}s\n"
+                    f"- **Max**: {self.duration_percentiles['max']:.3f}s\n"
+                )
+                if self.recommended_audio_processing:
+                    rf.write(
+                        f"- **主峰时长区间**: {self.recommended_audio_processing['dominant_range']}\n"
+                        f"- **Compact 推荐**: {self.recommended_audio_processing['compact_seconds']:.3f}s | "
+                        f"Waveform max_frames={self.recommended_audio_processing['compact']['waveform_max_frames']} | "
+                        f"Spectrogram max_frames={self.recommended_audio_processing['compact']['spectrogram_max_frames']}\n"
+                        f"- **Balanced 推荐（默认优先）**: {self.recommended_audio_processing['balanced_seconds']:.3f}s | "
+                        f"Waveform max_frames={self.recommended_audio_processing['balanced']['waveform_max_frames']} | "
+                        f"Spectrogram max_frames={self.recommended_audio_processing['balanced']['spectrogram_max_frames']}\n"
+                        f"- **Conservative 推荐**: {self.recommended_audio_processing['conservative_seconds']:.3f}s | "
+                        f"Waveform max_frames={self.recommended_audio_processing['conservative']['waveform_max_frames']} | "
+                        f"Spectrogram max_frames={self.recommended_audio_processing['conservative']['spectrogram_max_frames']}\n"
+                        f"- **换算参数**: target_sr={self.recommended_audio_processing['target_sr']}, "
+                        f"hop_length={self.recommended_audio_processing['hop_length']}\n"
+                    )
+            else:
+                rf.write("- 无可用时长分位数统计\n")
+            rf.write("\n")
             
             rf.write("## 2. 靶向标签分布\n")
             for emo, count in self.emotion_counts.items():
