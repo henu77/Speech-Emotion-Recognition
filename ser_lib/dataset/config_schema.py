@@ -38,6 +38,34 @@ class CollateStrategy(str, Enum):
     SLIDING_WINDOW = "sliding_window"
 
 
+def validate_strategy_compatibility(dataset_type: DatasetType, strategy: CollateStrategy) -> None:
+    """校验数据集类型与批处理策略是否兼容。"""
+    compatibility = {
+        DatasetType.WAVEFORM: {
+            CollateStrategy.TRUNCATE_PAD,
+            CollateStrategy.DYNAMIC_MASK,
+            CollateStrategy.SLIDING_WINDOW,
+        },
+        DatasetType.SPECTROGRAM: {
+            CollateStrategy.TRUNCATE_PAD,
+            CollateStrategy.DYNAMIC_MASK,
+            CollateStrategy.SLIDING_WINDOW,
+        },
+        DatasetType.FEATURE: {
+            CollateStrategy.TRUNCATE_PAD,
+            CollateStrategy.DYNAMIC_MASK,
+        },
+    }
+
+    allowed = compatibility[dataset_type]
+    if strategy not in allowed:
+        allowed_strategies = ", ".join(item.value for item in sorted(allowed, key=lambda x: x.value))
+        raise ValueError(
+            f"[策略兼容性] 数据集类型 '{dataset_type.value}' 不支持批处理策略 '{strategy.value}'。"
+            f"支持的策略为: {allowed_strategies}"
+        )
+
+
 class SpectrogramType(str, Enum):
     """谱图类型枚举"""
     SPECTROGRAM = "Spectrogram"
@@ -440,6 +468,7 @@ class WaveformDatasetConfig(BaseDatasetConfig):
             raise ValueError(
                 "[配置隔离] WaveformDataset 配置文件不得包含 features 节点"
             )
+        validate_strategy_compatibility(DatasetType.WAVEFORM, self.audio_processing.strategy)
         return self
 
 
@@ -463,6 +492,7 @@ class SpectrogramDatasetConfig(BaseDatasetConfig):
             raise ValueError(
                 "[配置隔离] SpectrogramDataset 配置文件不得包含 features 节点"
             )
+        validate_strategy_compatibility(DatasetType.SPECTROGRAM, self.audio_processing.strategy)
         return self
 
 
@@ -486,6 +516,7 @@ class FeatureDatasetConfig(BaseDatasetConfig):
             raise ValueError(
                 "[配置隔离] FeatureDataset 配置文件不得包含 spectrogram 节点"
             )
+        validate_strategy_compatibility(DatasetType.FEATURE, self.audio_processing.strategy)
         return self
 
 
@@ -610,6 +641,7 @@ __all__ = [
     'WaveformDatasetConfig',
     'SpectrogramDatasetConfig',
     'FeatureDatasetConfig',
+    'validate_strategy_compatibility',
     # 工具函数
     'detect_dataset_type',
     'load_config',

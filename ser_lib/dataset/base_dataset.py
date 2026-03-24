@@ -1,11 +1,12 @@
 import json
-import yaml
 import torch
 import torchaudio
 import torchaudio.transforms as T
 from torch.utils.data import Dataset
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
+
+from ser_lib.dataset.config_schema import load_config
 
 
 class BaseConfigDataset(Dataset):
@@ -36,30 +37,30 @@ class BaseConfigDataset(Dataset):
         super().__init__()
         self.split = split
         self.config = self._load_config(config_path)
+        self.config_dict = self.config.model_dump(mode='python')
 
         # --- 基础配置解析 ---
-        self.target_sr = self.config.get('audio', {}).get('target_sr', 16000)
-        self.id2label = self.config.get('class_mapping', {})
+        self.target_sr = self.config_dict.get('audio', {}).get('target_sr', 16000)
+        self.id2label = self.config_dict.get('class_mapping', {})
 
         # --- 数据列表路径拼接 ---
-        list_file = self.config['data_lists'][split]
-        metadata_dir = self.config.get('paths', {}).get('metadata_dir', None)
+        list_file = self.config_dict['data_lists'][split]
+        metadata_dir = self.config_dict.get('paths', {}).get('metadata_dir', None)
         if metadata_dir and not Path(list_file).is_absolute():
             if not str(list_file).startswith(metadata_dir):
                 list_file = str(Path(metadata_dir) / list_file)
 
         self.data_list = self._load_data_list(list_file)
-        self.data_root_dir = self.config.get('paths', {}).get('data_root_dir', None)
+        self.data_root_dir = self.config_dict.get('paths', {}).get('data_root_dir', None)
         self.resamplers: Dict[int, torch.nn.Module] = {}
 
     # ------------------------------------------------------------------
     # 公共辅助方法
     # ------------------------------------------------------------------
 
-    def _load_config(self, config_path: str) -> dict:
-        """加载并解析 YAML 配置文件。"""
-        with open(config_path, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
+    def _load_config(self, config_path: str) -> Any:
+        """加载、校验并返回结构化配置对象。"""
+        return load_config(config_path)
 
     def _load_data_list(self, list_path: str) -> List[dict]:
         """加载 JSON 或 JSONL 格式的数据集元数据列表。"""
