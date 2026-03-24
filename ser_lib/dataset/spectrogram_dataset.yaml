@@ -2,35 +2,60 @@
 # SpectrogramDataset 标准配置模板
 # 对应类: ser_lib.dataset.spectrogram_dataset.SpectrogramDataset
 #
-# 任务定位: 提取单一谱图特征 (Spectrogram, MelSpectrogram, LogMelSpectrogram, MFCC)，
-#           并应用频域增强，适用于 2D CNN 模型。
+# 任务定位:
+#   - 从原始音频提取单一谱图特征
+#   - 支持时域增强 + 频域增强
+#   - 适用于 2D CNN、CRNN、频谱图输入模型
 #
-# __getitem__ 输出: {"<spec_type>": Tensor[Freq, T]}, label, seq_length
+# 当前单样本输出:
+#   ({"<spec_name>": Tensor[F, T]}, label, seq_length)
 #
-# 【配置隔离规则】本配置文件必须包含 spectrogram 节点，不得包含 features 节点
+# 当前 batch 输出由 collate_fn 统一组装为:
+#   {
+#     "inputs": {"<spec_name>": ...},
+#     "labels": Tensor[B] 或 Tensor[B_expanded],
+#     "lengths": Tensor[B] 或 Tensor[B_expanded],
+#     "mask": Tensor[...] 或 None,
+#     "meta": {...}
+#   }
+#
+# 配置隔离规则:
+#   - [必填] 必须包含 spectrogram 节点
+#   - [必填] 不得包含 features 节点
 # =====================================================================
 
 # ---------------------------------------------------------------------
 # 1. 数据集元数据
 # ---------------------------------------------------------------------
+
+# [必填] 数据集名称
 dataset_name: "my_spectrogram_dataset"
+
+# [必填] 类别数量，必须与 class_mapping 数量一致
 num_classes: 6
 
+# [必填] 类别映射
 class_mapping:
   0: { en: "Neutral", zh: "平静" }
   1: { en: "Happy", zh: "高兴" }
   2: { en: "Angry", zh: "愤怒" }
   3: { en: "Sad", zh: "悲伤" }
-  4: { en: "Surprise", zh: "惊吓" }
+  4: { en: "Surprise", zh: "惊讶" }
   5: { en: "Fear", zh: "恐惧" }
 
 # ---------------------------------------------------------------------
-# 2. 路径配置
+# 2. 路径与数据列表配置
 # ---------------------------------------------------------------------
+
+# [可选] 路径配置
 paths:
+  # [可选] 元数据目录
   metadata_dir: "./data/my_dataset/metadata"
+
+  # [可选] 音频根目录
   data_root_dir: "./data/my_dataset/audio"
 
+# [必填] 数据列表
 data_lists:
   train: "train.jsonl"
   val: "val.jsonl"
@@ -39,69 +64,116 @@ data_lists:
 # ---------------------------------------------------------------------
 # 3. 音频基础参数
 # ---------------------------------------------------------------------
+
 audio:
+  # [可选] 统一重采样目标采样率
+  # Schema 默认值: 16000
   target_sr: 16000
 
 # ---------------------------------------------------------------------
-# 4. DataLoader 批处理策略
+# 4. 批处理策略
 # ---------------------------------------------------------------------
-# SpectrogramDataset 返回 2D 谱图 [Freq, T]
-#
-# 策略说明:
-#   - truncate_pad: 固定长度填充/截断，输出 [B, 1, Freq, T_fixed]，适合 2D CNN
-#   - dynamic_mask: 动态长度 + 注意力掩码，输出 [B, T_max, Freq] + mask，适合 Transformer
-#   - sliding_window: 滑动窗口切分，用于长音频评估投票
-#
-# collate_fn 输出格式 (truncate_pad):
-#   ({"x": {"melspectrogram": [B, 1, Freq, T_fixed]}}, Labels[B])
-# ---------------------------------------------------------------------
+
+# SpectrogramDataset 返回二维谱图 [F, T]
+# 推荐默认策略:
+#   - CNN/ResNet/EfficientNet: truncate_pad
+#   - Transformer on spectrogram: dynamic_mask
+#   - 长语音评估: sliding_window
+
 audio_processing:
+  # [可选] 批处理策略
+  # 可选值:
+  #   - truncate_pad  : 输出 [B, 1, F, T_fixed]
+  #   - dynamic_mask  : 输出 [B, T_max, F]
+  #   - sliding_window: 输出 [B_expanded, 1, F, T_window]
+  # Schema 默认值: truncate_pad
   strategy: "truncate_pad"
-  max_frames: 300            # 约 3s 语音 (hop_length=256, sr=16000)
-  window_size: 300           # [sliding_window 专用] 窗口大小
-  stride: 150                # [sliding_window 专用] 步长 (50% 重叠)
+
+  # [可选] truncate_pad 专用；单位是时间帧数而不是采样点数
+  # Schema 默认值: 300
+  max_frames: 300
+
+  # [可选] sliding_window 专用；单位是时间帧数
+  # Schema 默认值: 300
+  window_size: 300
+
+  # [可选] sliding_window 专用
+  # Schema 默认值: 150
+  stride: 150
 
 # ---------------------------------------------------------------------
-# 5. 谱图特征配置 (SpectrogramDataset 专属)
-# 支持类型: Spectrogram, MelSpectrogram, LogMelSpectrogram, MFCC
+# 5. 谱图配置
 # ---------------------------------------------------------------------
+
 spectrogram:
+  # [必填] 谱图类型
+  # 可选值:
+  #   - Spectrogram
+  #   - MelSpectrogram
+  #   - LogMelSpectrogram
+  #   - MFCC
   type: "LogMelSpectrogram"
+
   kwargs:
-    sample_rate: 16000       # 采样率，范围: [8000, 48000]
-    n_fft: 1024              # FFT 窗口大小，范围: [64, 8192]
-    win_length: 1024         # 窗函数长度，范围: [64, 8192]，需 <= n_fft
-    hop_length: 256          # 帧移步长，范围: [16, 4096]
-    n_mels: 80               # Mel 滤波器组数量，范围: [20, 256]
-    f_min: 0.0               # 最低频率 (Hz)，范围: [0.0, sample_rate/2]
-    f_max: 8000.0            # 最高频率 (Hz)，范围: [f_min, sample_rate/2]
-    power: 2.0               # 能量谱指数，范围: [1.0, 3.0]
-    top_db: 80.0             # Log-Mel 动态范围裁剪 (dB)，范围: [40.0, 120.0]
+    # [可选] 谱图采样率；通常建议与 audio.target_sr 一致
+    # Schema 默认值: None
+    sample_rate: 16000
+
+    # [可选] FFT 窗口大小
+    # Schema 默认值: None
+    n_fft: 1024
+
+    # [可选] 窗函数长度；必须 <= n_fft
+    # Schema 默认值: None
+    win_length: 1024
+
+    # [可选] 帧移
+    # Schema 默认值: None
+    hop_length: 256
+
+    # [可选] Mel 相关参数；仅对 Mel/LogMel/MFCC 真正有效
+    # Schema 默认值: None
+    n_mels: 80
+    f_min: 0.0
+    f_max: 8000.0
+
+    # [可选] 谱图幅度指数
+    # Schema 默认值: None
+    power: 2.0
+
+    # [可选] Log-Mel 动态范围裁剪；仅 LogMelSpectrogram 常用
+    # Schema 默认值: None
+    top_db: 80.0
+
+    # [可选] MFCC 维数；仅 MFCC 常用
+    # Schema 默认值: None
+    # n_mfcc: 40
 
 # ---------------------------------------------------------------------
 # 6. 数据增强配置
-# SpectrogramDataset 使用 waveform_level + spectrogram_level
 # ---------------------------------------------------------------------
+
 transforms:
   # ================================================================
-  # 波形级基础增强 (谱图提取前执行)
+  # 6.1 波形级基础增强
   # ================================================================
   waveform_level:
+    # [可选]
     train:
-      # 示例 1: 波形归一化
+      # 实现说明: p 不适用
       - type: "Normalize"
 
-      # 示例 2: 高斯噪声注入
+      # Schema 默认值: p=0.5
       - type: "AddGaussianNoise"
-        snr: 20.0            # 信噪比 (dB)，范围: [5.0, 40.0]
+        snr: 20.0
         p: 0.5
 
-      # 示例 3: 时间平移
+      # Schema 默认值: p=0.5
       - type: "TimeShift"
         shift_max_ratio: 0.15
         p: 0.3
 
-      # 示例 4: 音量缩放
+      # Schema 默认值: p=0.5
       - type: "VolumeScale"
         gain_min: 0.8
         gain_max: 1.2
@@ -111,21 +183,21 @@ transforms:
     test: []
 
   # ================================================================
-  # 波形级高级增强
+  # 6.2 波形级高级增强
   # ================================================================
   advanced_waveform_level:
+    # [可选]
     train:
-      # 示例 1: 音调偏移
+      # Schema 默认值: p=0.5
       - type: "PitchShift"
-        n_steps: 2           # 半音阶数，范围: [-12, 12]
+        n_steps: 2
         p: 0.3
 
-      # 示例 2: 时间拉伸
+      # Schema 默认值: p=0.5
       - type: "TimeStretch"
-        rate: 1.1            # 速率，范围: [0.5, 2.0]
+        rate: 1.1
         p: 0.3
 
-      # 示例 3: 房间冲激响应混响
       # - type: "RIR_Simulation"
       #   rir_path: "./data/rir/room_impulse_response.wav"
       #   p: 0.3
@@ -134,29 +206,29 @@ transforms:
     test: []
 
   # ================================================================
-  # 频域增强 (谱图提取后执行) - SpectrogramDataset 核心增强
+  # 6.3 频域增强
   # ================================================================
   spectrogram_level:
+    # [可选] SpectrogramDataset 的核心增强位置
     train:
-      # 示例 1: SpecAugment 时频掩码
+      # Schema 默认值: p=0.5
       - type: "SpecMasking"
-        time_mask_param: 40   # 时间掩码最大宽度，范围: [1, 200]
-        freq_mask_param: 15   # 频率掩码最大宽度，范围: [1, 100]
+        time_mask_param: 40
+        freq_mask_param: 15
         p: 0.5
 
-      # 示例 2: 随机频带滤波
+      # Schema 默认值: p=0.5
       - type: "FilterAugment"
-        n_band: 2             # 频带数量，范围: [1, 5]
-        db_range: [-6.0, 6.0] # 增益范围 (dB)
-        band_width_ratio: 0.2 # 频带宽度比例，范围: [0.05, 0.5]
+        n_band: 2
+        db_range: [-6.0, 6.0]
+        band_width_ratio: 0.2
         p: 0.4
 
-      # 示例 3: 声道长度扰动 (模拟不同说话人)
+      # Schema 默认值: p=0.5
       - type: "VTLP"
-        warp_factor_range: [0.9, 1.1]  # 扭曲因子范围
+        warp_factor_range: [0.9, 1.1]
         p: 0.3
 
-      # 示例 4: SpecMix/CutMix (需在 batch_level 实现)
       # - type: "SpecMix"
       #   p: 0.5
 
@@ -164,13 +236,14 @@ transforms:
     test: []
 
   # ================================================================
-  # 批次级增强
+  # 6.4 批次级增强
   # ================================================================
   batch_level:
+    # [可选]
     train:
-      # 示例: Mixup 样本混合 (需在 collate_fn 中实现)
       # - type: "Mixup"
-      #   alpha: 0.2          # Beta 分布参数，范围: [0.1, 1.0]
+      #   # Schema 默认值: p=0.5
+      #   alpha: 0.2
       #   p: 0.5
     val: []
     test: []

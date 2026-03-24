@@ -736,7 +736,7 @@ class DatasetProcessor:
 
     def _generate_project_yaml(self, interactive: bool = True):
         """生成与当前 dataset schema 兼容的运行时 YAML 配置文件。"""
-        yaml_config_dir = Path("ser_lib/dataset/configs")
+        yaml_config_dir = self.output_meta_dir
         yaml_config_dir.mkdir(parents=True, exist_ok=True)
         if interactive:
             config_dict = self._build_dataset_config_interactive()
