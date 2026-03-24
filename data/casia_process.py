@@ -1,4 +1,3 @@
-import os
 import sys
 import random
 from pathlib import Path
@@ -105,12 +104,66 @@ class CasiaProcessor(DatasetProcessor):
             'test': eval_data[half:]
         }
 
+    def _build_custom_dataset_config(
+        self,
+        template_type: str,
+        strategy: str | None = None,
+        spectrogram_type: str | None = None,
+    ) -> Dict[str, Any]:
+        """CASIA 的自定义模板：给出更贴合中文短句情感识别的默认参数。"""
+        config = super()._build_custom_dataset_config(template_type, strategy, spectrogram_type)
+
+        if template_type == "waveform":
+            config["audio_processing"]["strategy"] = strategy or "dynamic_mask"
+            config["audio_processing"]["max_frames"] = 48000
+            config["audio_processing"]["window_size"] = 48000
+            config["audio_processing"]["stride"] = 24000
+        elif template_type == "spectrogram":
+            config["audio_processing"]["strategy"] = strategy or "truncate_pad"
+            config["audio_processing"]["max_frames"] = 200
+            config["audio_processing"]["window_size"] = 200
+            config["audio_processing"]["stride"] = 100
+            config["spectrogram"]["type"] = spectrogram_type or "LogMelSpectrogram"
+            config["spectrogram"]["kwargs"].update(
+                {
+                    "sample_rate": 16000,
+                    "n_fft": 1024,
+                    "win_length": 1024,
+                    "hop_length": 256,
+                    "n_mels": 80,
+                    "top_db": 80.0,
+                }
+            )
+        elif template_type == "feature":
+            config["audio_processing"]["strategy"] = strategy or "dynamic_mask"
+            config["audio_processing"]["max_frames"] = 200
+            config["features"]["selected_features"] = {
+                "f0": {
+                    "type": "F0",
+                    "kwargs": {"hop_length": 256},
+                },
+                "rms": {
+                    "type": "RMS",
+                    "kwargs": {"win_length": 400, "hop_length": 256},
+                },
+                "zcr": {
+                    "type": "ZCR",
+                    "kwargs": {"win_length": 400, "hop_length": 256},
+                },
+                "spectral_centroid": {
+                    "type": "SpectralCentroid",
+                    "kwargs": {"n_fft": 1024, "hop_length": 256},
+                },
+            }
+
+        return config
+
 if __name__ == "__main__":
     # CASIA 物理存放位置
     CASIA_RAW_DIR = "data/CASIA" 
     
     # 抽取出的 JSONL 元数据及 Markdown 报告存放点
-    OUTPUT_META_DIR = "ser_lib/datasets/configs/casia"
+    OUTPUT_META_DIR = "ser_lib/dataset/configs/casia"
     
     print("🚀 启动 CASIA 对象化数据洗牌任务...")
     
