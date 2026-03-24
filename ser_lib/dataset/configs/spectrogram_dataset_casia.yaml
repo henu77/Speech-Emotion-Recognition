@@ -47,7 +47,12 @@ audio:
 # ---------------------------------------------------------------------
 # SpectrogramDataset 返回 2D 谱图 [Freq, T]，推荐使用 truncate_pad
 # collate_fn 输出格式 (truncate_pad):
-#   ({"x": {"melspectrogram": [B, 1, Freq, T_fixed]}}, Labels[B])
+#   {"inputs": {"logmelspectrogram": [B, 1, Freq, T_fixed]}, "labels": [B], "lengths": [B], "mask": None, "meta": {...}}
+# collate_fn 输出格式 (dynamic_mask):
+#   {"inputs": {"logmelspectrogram": [B, T_max, Freq]}, "labels": [B], "lengths": [B], "mask": [B, T_max], "meta": {...}}
+# collate_fn 输出格式 (sliding_window):
+#   {"inputs": {"logmelspectrogram": [B_expanded, 1, Freq, T_window]}, "labels": [B_expanded], "lengths": [B_expanded],
+#    "mask": None, "meta": {"window_counts": [B], "original_labels": [B], ...}}
 # ---------------------------------------------------------------------
 audio_processing:
   strategy: "truncate_pad"

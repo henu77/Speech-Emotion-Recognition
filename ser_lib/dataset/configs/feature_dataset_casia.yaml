@@ -47,7 +47,10 @@ audio:
 # ---------------------------------------------------------------------
 # FeatureDataset 返回多特征字典，推荐使用 dynamic_mask 保留真实长度
 # collate_fn 输出格式 (dynamic_mask):
-#   ({"x": {"f0": [B, T_max, 1], "rms": [B, T_max, 1], ...}, "mask": [B, T_max]}, Labels[B])
+#   {"inputs": {"f0": [B, T_max, 1], "rms": [B, T_max, 1], ...}, "labels": [B], "lengths": [B], "mask": [B, T_max], "meta": {...}}
+# collate_fn 输出格式 (truncate_pad):
+#   {"inputs": {"f0": [B, T_fixed, 1], "rms": [B, T_fixed, 1], ...}, "labels": [B], "lengths": [B], "mask": None, "meta": {...}}
+# 当前约束: FeatureDataset 暂不支持 sliding_window
 # ---------------------------------------------------------------------
 audio_processing:
   strategy: "dynamic_mask"

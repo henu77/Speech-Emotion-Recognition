@@ -47,9 +47,12 @@ audio:
 # ---------------------------------------------------------------------
 # WaveformDataset 返回 1D 序列 [T]，推荐使用 dynamic_mask 保留真实长度
 # collate_fn 输出格式 (dynamic_mask):
-#   ({"x": {"raw_waveform": [B, T_max]}, "mask": [B, T_max]}, Labels[B])
+#   {"inputs": {"raw_waveform": [B, T_max]}, "labels": [B], "lengths": [B], "mask": [B, T_max], "meta": {...}}
 # collate_fn 输出格式 (truncate_pad):
-#   ({"x": {"raw_waveform": [B, 1, 1, T_fixed]}}, Labels[B])
+#   {"inputs": {"raw_waveform": [B, T_fixed]}, "labels": [B], "lengths": [B], "mask": None, "meta": {...}}
+# collate_fn 输出格式 (sliding_window):
+#   {"inputs": {"raw_waveform": [B_expanded, T_window]}, "labels": [B_expanded], "lengths": [B_expanded], "mask": None,
+#    "meta": {"window_counts": [B], "original_labels": [B], ...}}
 # ---------------------------------------------------------------------
 audio_processing:
   strategy: "dynamic_mask"

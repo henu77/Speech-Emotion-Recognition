@@ -161,9 +161,20 @@ Tuple[Dict[str, torch.Tensor], torch.Tensor, int]
 **`collate_fn` 返回值：**
 
 ```python
-Tuple[Dict[str, Any], torch.Tensor]
-#     ↑ batch_dict        ↑ labels [B]
+{
+    "inputs": Dict[str, torch.Tensor],
+    "labels": torch.Tensor,
+    "lengths": torch.Tensor,
+    "mask": Optional[torch.Tensor],
+    "meta": Dict[str, Any],
+}
 ```
+
+- `inputs`：模型输入张量集合
+- `labels`：当前 batch 对应标签
+- `lengths`：真实有效长度（或窗口展开后的长度）
+- `mask`：仅 `dynamic_mask` 返回布尔掩码，其余策略为 `None`
+- `meta`：批处理元信息，至少包含 `dataset_type` 与 `collate_strategy`
 
 **策略一：`truncate_pad`（固定长度）**
 
@@ -171,9 +182,15 @@ Tuple[Dict[str, Any], torch.Tensor]
 
 ```python
 {
-    'x': {
-        '<feature_name>': Tensor[B, 1, Freq, T_fixed]  # 自动添加 Channel 维度
-    }
+    'inputs': {
+        'raw_waveform': Tensor[B, T_fixed]             # WaveformDataset
+        '<feature_name>': Tensor[B, T_fixed, D]        # FeatureDataset
+        '<spec_name>': Tensor[B, 1, Freq, T_fixed]     # SpectrogramDataset
+    },
+    'labels': Tensor[B],
+    'lengths': Tensor[B],
+    'mask': None,
+    'meta': {...}
 }
 ```
 
@@ -186,10 +203,15 @@ Tuple[Dict[str, Any], torch.Tensor]
 
 ```python
 {
-    'x': {
-        '<feature_name>': Tensor[B, T_max, D]  # 转置为 [B, Time, Feature_dim]
+    'inputs': {
+        'raw_waveform': Tensor[B, T_max],
+        '<feature_name>': Tensor[B, T_max, D],
+        '<spec_name>': Tensor[B, T_max, Freq]
     },
-    'mask': Tensor[B, T_max]  # True=真实数据, False=填充区域
+    'labels': Tensor[B],
+    'lengths': Tensor[B],
+    'mask': Tensor[B, T_max],  # True=真实数据, False=填充区域
+    'meta': {...}
 }
 ```
 
@@ -199,11 +221,17 @@ Tuple[Dict[str, Any], torch.Tensor]
 
 ```python
 {
-    'x': {
-        '<feature_name>': Tensor[B_expanded, 1, Freq, window_size]
+    'inputs': {
+        'raw_waveform': Tensor[B_expanded, window_size],
+        '<spec_name>': Tensor[B_expanded, 1, Freq, window_size]
     },
-    'window_counts': Tensor[B],        # 每个原始样本展开的窗口数
-    'original_labels': Tensor[B]       # 原始标签（用于投票聚合）
+    'labels': Tensor[B_expanded],
+    'lengths': Tensor[B_expanded],
+    'mask': None,
+    'meta': {
+        'window_counts': Tensor[B],     # 每个原始样本展开的窗口数
+        'original_labels': Tensor[B]    # 原始标签（用于投票聚合）
+    }
 }
 ```
 
