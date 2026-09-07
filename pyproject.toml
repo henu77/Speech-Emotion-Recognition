@@ -1,29 +1,39 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ser-lib"
 version = "0.2.0"
 description = "Speech Emotion Recognition library: data pipeline, models and inference"
-readme = "README.md"
+readme = "readme.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "SER contributors" }]
 dependencies = [
     "torch>=2.0",
     "torchaudio>=2.0",
     "pydantic>=2.5",
     "PyYAML>=6.0",
+    "safetensors>=0.4",
 ]
+
+[project.scripts]
+ser = "ser_lib.cli.main:main"
 
 [project.optional-dependencies]
 test = [
     "pytest>=7.4",
 ]
-desktop = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
+dev = [
+    "build>=1.2",
+    "mypy>=1.10",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+]
+pretrained = [
+    "transformers>=4.38,<6",
 ]
 
 [tool.setuptools.packages.find]
@@ -35,3 +45,17 @@ addopts = "-ra"
 filterwarnings = [
     "ignore::DeprecationWarning:torchaudio.*",
 ]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+# 覆盖 Pyflakes 及高价值 pycodestyle 结构错误；格式化规则后续独立迁移。
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+show_error_codes = true
+ignore_missing_imports = true

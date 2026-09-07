@@ -12,7 +12,6 @@ import torchaudio.transforms as T
 from pydantic import BaseModel, ConfigDict, Field
 
 from ser_lib.data.registry import ComponentDescriptor
-from ser_lib.data.transforms.base import RandomApply
 
 
 class SpecMaskingConfig(BaseModel):

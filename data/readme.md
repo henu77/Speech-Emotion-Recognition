@@ -69,7 +69,7 @@ collator = build_collator(pipeline.output_specs, config.batching)
 
 ### 4. RAVDESS
 
-[GitHub 链接](https://github.com/tuncayka/speech_emotion)
+[官方发布页](https://zenodo.org/records/1188976)
 The Ryerson Audio-Visual Database of Emotional Speech and Song，高度规范的北美英语多模态情绪数据集。
 
 * **语言**：英文 (English)
@@ -78,6 +78,15 @@ The Ryerson Audio-Visual Database of Emotional Speech and Song，高度规范的
 * **情绪强度**：正常、强烈 (注: 中性情绪没有强烈强度)
 * **数据集规模**：7,356 个文件 (含音视频)，由于单纯语音识别一般使用 Audio-only，纯语音文本部分包含 1,440 个文件
 * **命名规则**：具有确切的 7 部分数字文件名标识体系 (如 `03-01-05-01-01-01-01.wav`)
+* **许可**：CC BY-NC-SA 4.0；商业使用需另行确认官方许可
+
+本库不会下载 RAVDESS。取得数据并确认许可后，可通过统一 CLI 导入：
+
+```bash
+ser dataset scan --importer ravdess --source "path/to/RAVDESS" --json
+ser dataset import --importer ravdess --source "path/to/RAVDESS" --destination "data/ravdess-standard"
+ser dataset stats "data/ravdess-standard/dataset.yaml" --probe-audio --json
+```
 
 ### 5. CSEMOTIONS
 

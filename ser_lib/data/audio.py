@@ -83,12 +83,12 @@ class AudioLoader:
 
         if not path.exists():
             raise AudioNotFoundError(
-                f"音频文件不存在", uid=uid, path=path, component="audio_loader",
+                "音频文件不存在", uid=uid, path=path, component="audio_loader",
                 stage="resolve",
             )
         if not path.is_file():
             raise AudioDecodeError(
-                f"音频路径不是文件", uid=uid, path=path, component="audio_loader",
+                "音频路径不是文件", uid=uid, path=path, component="audio_loader",
                 stage="resolve",
             )
 
@@ -96,7 +96,7 @@ class AudioLoader:
             info = torchaudio.info(str(path))
         except Exception as exc:  # noqa: BLE001 - torchaudio 抛出的异常类型因后端而异
             raise AudioDecodeError(
-                f"读取音频元信息失败", uid=uid, path=path,
+                "读取音频元信息失败", uid=uid, path=path,
                 component="audio_loader", stage="probe",
             ) from exc
 
@@ -113,13 +113,13 @@ class AudioLoader:
             )
         except Exception as exc:  # noqa: BLE001
             raise AudioDecodeError(
-                f"音频解码失败", uid=uid, path=path, component="audio_loader",
+                "音频解码失败", uid=uid, path=path, component="audio_loader",
                 stage="decode",
             ) from exc
 
         if waveform.numel() == 0 or waveform.shape[-1] == 0:
             raise InvalidAudioSegmentError(
-                f"解码结果为空音频（0 帧）", uid=uid, path=path,
+                "解码结果为空音频（0 帧）", uid=uid, path=path,
                 component="audio_loader", stage="decode",
             )
         if sr != original_sr:
@@ -132,7 +132,7 @@ class AudioLoader:
 
         if not torch.isfinite(waveform).all():
             raise AudioDecodeError(
-                f"音频包含 NaN/Inf，拒绝加载（不做自动替换）", uid=uid, path=path,
+                "音频包含 NaN/Inf，拒绝加载（不做自动替换）", uid=uid, path=path,
                 component="audio_loader", stage="validate",
             )
 
@@ -154,7 +154,7 @@ class AudioLoader:
 
         if waveform.shape[-1] == 0:
             raise InvalidAudioSegmentError(
-                f"重采样后音频为空", uid=uid, path=path,
+                "重采样后音频为空", uid=uid, path=path,
                 component="audio_loader", stage="resample",
             )
 

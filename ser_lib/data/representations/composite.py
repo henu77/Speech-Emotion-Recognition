@@ -70,7 +70,8 @@ class CompositeRepresentation(Representation):
                 )
             self._sub_representations[target_key] = sub_rep
 
-        self._modules_map = nn_map = {}
+        nn_map: dict[str, Representation] = {}
+        self._modules_map = nn_map
         for target_key, sub_rep in self._sub_representations.items():
             sub_keys = set(sub_rep.output_specs.keys())
             if len(sub_keys) == 1:

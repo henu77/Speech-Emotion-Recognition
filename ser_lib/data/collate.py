@@ -17,7 +17,7 @@ Mixup 属于 batch transform，在其契约（软标签表示、loss/metrics 协
 from __future__ import annotations
 
 from enum import Enum
-from typing import Sequence
+from typing import Sequence, cast
 
 import torch
 import torch.nn.functional as F
@@ -57,6 +57,7 @@ class SERCollator:
 
         temporal_keys = [k for k, s in self.specs.items() if s.temporal]
         if self.strategy is CollateStrategy.FIXED:
+            assert batching.fixed is not None
             missing = [k for k in temporal_keys if k not in batching.fixed.max_lengths]
             if missing:
                 raise CollationError(
@@ -110,7 +111,9 @@ class SERCollator:
                 component="collator", stage="collate",
             )
         else:
-            labels = torch.tensor([int(s.label) for s in samples], dtype=torch.long)
+            labels = torch.tensor(
+                [cast(int, sample.label) for sample in samples], dtype=torch.long
+            )
 
         if self.strategy is CollateStrategy.DYNAMIC:
             return self._collate_dynamic(samples, labels)
@@ -157,6 +160,7 @@ class SERCollator:
         inputs: dict[str, torch.Tensor] = {}
         lengths: dict[str, torch.Tensor] = {}
 
+        assert self.batching.fixed is not None
         for key, spec in self.specs.items():
             tensors = [s.inputs[key] for s in samples]
             if not spec.temporal:
@@ -184,6 +188,7 @@ class SERCollator:
                          labels: torch.Tensor | None) -> SERBatch:
         spec_key = next(k for k, s in self.specs.items() if s.temporal)
         spec = self.specs[spec_key]
+        assert self.batching.sliding is not None
         window = self.batching.sliding.window_size
         stride = self.batching.sliding.stride
 
@@ -260,6 +265,7 @@ class SERCollator:
 def _pad_time(tensor: torch.Tensor, spec: TensorSpec, target: int) -> torch.Tensor:
     """沿 spec 的时间轴右侧 padding 到 target 长度。"""
     axis = time_axis_of(spec.layout)
+    assert axis is not None
     current = tensor.shape[axis]
     if current >= target:
         return tensor
@@ -273,6 +279,7 @@ def _pad_time(tensor: torch.Tensor, spec: TensorSpec, target: int) -> torch.Tens
 def _truncate_time(tensor: torch.Tensor, spec: TensorSpec, target: int) -> torch.Tensor:
     """沿 spec 的时间轴截断到 target 长度。"""
     axis = time_axis_of(spec.layout)
+    assert axis is not None
     if tensor.shape[axis] <= target:
         return tensor
     if spec.layout == LAYOUT_TD:
@@ -282,7 +289,6 @@ def _truncate_time(tensor: torch.Tensor, spec: TensorSpec, target: int) -> torch
 
 def _slice_time(tensor: torch.Tensor, spec: TensorSpec, start: int, end: int) -> torch.Tensor:
     """沿 spec 的时间轴切片 [start, end)。"""
-    axis = time_axis_of(spec.layout)
     if spec.layout == LAYOUT_TD:
         return tensor[start:end]
     return tensor[..., start:end]

@@ -110,7 +110,6 @@ class CasiaImporter:
     def convert(
         self, source: Path, destination: Path, config: Mapping[str, Any]
     ) -> DatasetManifest:
-        cfg = CasiaImportConfig(**dict(config))
         destination = Path(destination)
         destination.mkdir(parents=True, exist_ok=True)
 

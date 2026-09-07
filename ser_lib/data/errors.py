@@ -20,8 +20,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ser_lib.core.exceptions import SERError
 
-class SERDataError(Exception):
+
+class SERDataError(SERError):
     """数据模块所有业务异常的基类。"""
 
     def __init__(self, message: str, *, uid: str | None = None,
@@ -48,7 +50,18 @@ class SERDataError(Exception):
             parts.append(f"stage={stage}")
         if parts:
             message = f"{message} [{'; '.join(parts)}]"
-        super().__init__(message)
+        super().__init__(
+            message,
+            code="data_error",
+            details={
+                key: value for key, value in {
+                    "uid": uid,
+                    "path": str(path) if path is not None else None,
+                    "component": component,
+                    "stage": stage,
+                }.items() if value is not None
+            },
+        )
         self.uid = uid
         self.path = Path(path) if path is not None else None
         self.component = component

@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import torch
 from torch import nn
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
+from ser_lib.core.config import StrictConfig
 from ser_lib.data.types import SERBatch, TensorSpec
 from ser_lib.data.validation import ModelSpec
 from ser_lib.models.base import ModelOutput, SERModel
 from ser_lib.models.registry import ModelDescriptor, model_registry
 
-class CNNBaselineConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class CNNBaselineConfig(StrictConfig):
     feature_dim: int = Field(ge=1)
     num_classes: int = Field(ge=2)
     hidden_dim: int = Field(default=128, ge=1)
@@ -40,6 +40,8 @@ class CNNBaseline(SERModel):
             raise ValueError("dropout 必须位于 [0, 1)")
         self.feature_dim = int(feature_dim)
         self.num_classes = int(num_classes)
+        self.hidden_dim = int(hidden_dim)
+        self.dropout = float(dropout)
         self.encoder = nn.Sequential(
             nn.Conv1d(feature_dim, hidden_dim, kernel_size=5, padding=2),
             nn.BatchNorm1d(hidden_dim),
@@ -62,6 +64,15 @@ class CNNBaseline(SERModel):
             num_classes=self.num_classes,
         )
 
+    @property
+    def model_config(self) -> dict[str, int | float]:
+        return CNNBaselineConfig(
+            feature_dim=self.feature_dim,
+            num_classes=self.num_classes,
+            hidden_dim=self.hidden_dim,
+            dropout=self.dropout,
+        ).model_dump(mode="json")
+
     def forward(self, batch: SERBatch) -> ModelOutput:
         try:
             features = batch.inputs["features"]
@@ -71,6 +82,10 @@ class CNNBaseline(SERModel):
             raise ValueError(
                 f"CNNBaseline 期望 [B,{self.feature_dim},T]，实际 {tuple(features.shape)}"
             )
+        if features.shape[0] < 1 or features.shape[-1] < 1:
+            raise ValueError("CNNBaseline 不接受空 batch 或零长度时间轴")
+        if not features.is_floating_point():
+            raise ValueError(f"CNNBaseline features 必须是浮点 tensor，实际 {features.dtype}")
         encoded = self.encoder(features)
         mask = batch.masks.get("features")
         if mask is None:
@@ -81,8 +96,10 @@ class CNNBaseline(SERModel):
                     f"features mask 期望 {(features.shape[0], features.shape[-1])}，"
                     f"实际 {tuple(mask.shape)}"
                 )
+            if torch.any(mask.sum(dim=-1) == 0):
+                raise ValueError("CNNBaseline 的每个样本必须至少包含一个有效时间步")
             weights = mask.to(encoded.dtype).unsqueeze(1)
-            embeddings = (encoded * weights).sum(dim=-1) / weights.sum(dim=-1).clamp_min(1.0)
+            embeddings = (encoded * weights).sum(dim=-1) / weights.sum(dim=-1)
         return ModelOutput(logits=self.classifier(embeddings), embeddings=embeddings)
 
 

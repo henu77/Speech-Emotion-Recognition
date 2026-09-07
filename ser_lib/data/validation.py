@@ -17,13 +17,14 @@ from ser_lib.data.types import TensorSpec
 
 @dataclass(frozen=True)
 class ModelSpec:
-    """模型输入规格（模型显式声明，禁止前端或训练器猜测 tensor shape）。"""
+    """模型输入规格（模型显式声明，禁止调用方猜测 tensor shape）。"""
 
     model_id: str
     required_inputs: dict[str, TensorSpec]
     supports_masks: bool
     supports_variable_length: bool
     num_classes: int | None
+    expected_sample_rate: int | None = None
 
 
 def validate_compatibility(
@@ -32,6 +33,7 @@ def validate_compatibility(
     batching_config: BatchingConfig,
     *,
     num_classes: int | None = None,
+    sample_rate: int | None = None,
 ) -> None:
     """校验表示 specs、批处理配置与模型 spec 的兼容性。
 
@@ -83,6 +85,7 @@ def validate_compatibility(
                 f"必须配置 batching.type='fixed'，实际: {batching_config.type}"
             )
         else:
+            assert batching_config.fixed is not None
             temporal_keys = [k for k, s in representation_specs.items() if s.temporal]
             missing_lengths = [
                 k for k in temporal_keys
@@ -100,6 +103,13 @@ def validate_compatibility(
         problems.append(
             f"类别数不一致: 数据集 {num_classes} 类，模型 {model_spec.model_id} "
             f"输出 {model_spec.num_classes} 类"
+        )
+
+    if model_spec.expected_sample_rate is not None and sample_rate is not None \
+            and model_spec.expected_sample_rate != sample_rate:
+        problems.append(
+            f"采样率不一致: 模型 {model_spec.model_id} 要求 "
+            f"{model_spec.expected_sample_rate} Hz，数据流水线输出 {sample_rate} Hz"
         )
 
     # 7. 滑动窗口产生数量可变的窗口，模型需要支持可变批次语义

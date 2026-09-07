@@ -1,7 +1,7 @@
 """Importer 公共协议与预览结构（设计文档 §6.3）。
 
 Importer 把外部数据格式转换为标准 manifest，必须区分 ``scan()``（预览，
-不写盘）与 ``convert()``（用户确认后写入工作区）。扫描按条目收集错误，
+不写盘）与 ``convert()``（确认后写入目标目录）。扫描按条目收集错误，
 不因单个损坏文件终止全部扫描，也不把音频内容加载进内存。
 """
 
@@ -18,7 +18,7 @@ from ser_lib.data.types import AudioRecord
 
 @dataclass(frozen=True)
 class ImportIssue:
-    """单条导入错误或告警，保留原因以便桌面端汇总展示。"""
+    """单条导入错误或告警，保留原因以便调用方汇总展示。"""
 
     entry_index: int | None
     path: Path | None

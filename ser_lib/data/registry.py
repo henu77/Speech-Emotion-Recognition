@@ -4,7 +4,7 @@
 重复注册默认报错；组件参数由各自的 Pydantic 配置模型校验（``extra="forbid"``），
 未知组件和未知参数都会在任务启动前失败，禁止静默降级。
 
-桌面端通过 :class:`ComponentDescriptor` 枚举组件与生成表单。
+调用方通过 :class:`ComponentDescriptor` 枚举组件并读取配置 schema。
 """
 
 from __future__ import annotations
@@ -23,17 +23,16 @@ STATUS_STABLE = "stable"
 STATUS_EXPERIMENTAL = "experimental"
 STATUS_UNAVAILABLE = "unavailable"
 
-# 桌面端普通组件列表只返回 stable
+# 默认公开列表只返回 stable
 PUBLIC_STATUSES: tuple[str, ...] = (STATUS_STABLE,)
 
 
 @dataclass(frozen=True)
 class ComponentDescriptor:
-    """暴露给桌面端的组件描述信息。
+    """公开的组件描述信息。
 
-    ``config_schema`` 来自 Pydantic 配置模型的 JSON Schema；前端不得假设所有
-    JSON Schema 特性都受支持（第一版限制到数字、字符串、布尔、枚举、数组和
-    简单嵌套对象）。
+    ``config_schema`` 来自 Pydantic 配置模型的 JSON Schema；调用方可以据此
+    检查可用参数，但仍须由注册表执行最终校验。
     """
 
     id: str
@@ -197,6 +196,7 @@ class Registry:
         Raises:
             RegistryError: 未知组件类型或参数校验失败。
         """
+        comp_type: str
         if isinstance(component, str):
             comp_type, params = component, {}
         else:
@@ -209,10 +209,11 @@ class Registry:
                 raise RegistryError(
                     f"组件配置包含未知字段 {sorted(unknown_keys)}，仅允许 'type' 与 'params'"
                 )
-            comp_type = component.get("type")
+            raw_type = component.get("type")
             params = dict(component.get("params") or {})
-            if not isinstance(comp_type, str) or not comp_type:
-                raise RegistryError(f"组件 'type' 必须是非空字符串，实际: {comp_type!r}")
+            if not isinstance(raw_type, str) or not raw_type:
+                raise RegistryError(f"组件 'type' 必须是非空字符串，实际: {raw_type!r}")
+            comp_type = raw_type
             if not isinstance(params, dict):
                 raise RegistryError(
                     f"组件 'params' 必须是字典，实际: {type(params)!r}"
@@ -245,7 +246,7 @@ class Registry:
             ) from exc
 
     # ------------------------------------------------------------------
-    # 枚举（桌面端）
+    # 枚举
     # ------------------------------------------------------------------
 
     def names(self, namespace: str) -> list[str]:

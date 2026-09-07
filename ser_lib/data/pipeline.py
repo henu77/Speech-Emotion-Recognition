@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import replace
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
-import torch
 import torch.nn as nn
+
+if TYPE_CHECKING:
+    from ser_lib.data.audio import AudioLoader
 
 from ser_lib.data.config import ComponentConfig, DataConfig
 from ser_lib.data.errors import RepresentationError, TransformError
@@ -151,7 +153,7 @@ def build_representation(component: Mapping[str, Any] | str) -> Representation:
 
 def _factory_accepts(factory: type, param: str) -> bool:
     try:
-        signature = inspect.signature(factory.__init__)
+        signature = inspect.signature(factory)
     except (TypeError, ValueError):  # pragma: no cover
         return False
     return param in signature.parameters
@@ -215,13 +217,9 @@ def _build_feature_transforms(
     allow_random: bool,
 ) -> FeatureTransformPipeline | None:
     """构建特征 transform 流水线，并做构建期 layout 兼容性校验。"""
-    from ser_lib.data.transforms.feature import SPEC_MASKING_DESCRIPTOR, SpecMasking, SpecMaskingConfig
-
     modules: list[nn.Module] = []
     for component in configs:
-        if component.type == "spec_masking":
-            factory, config_model, descriptor = SpecMasking, SpecMaskingConfig, SPEC_MASKING_DESCRIPTOR
-        else:
+        if component.type != "spec_masking":
             from ser_lib.data.errors import RegistryError
 
             raise RegistryError(

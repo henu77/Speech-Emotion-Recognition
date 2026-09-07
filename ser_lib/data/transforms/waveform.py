@@ -15,7 +15,6 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchaudio
 import torchaudio.transforms as T
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 

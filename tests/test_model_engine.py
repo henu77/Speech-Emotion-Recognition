@@ -4,6 +4,8 @@ import struct
 import wave
 
 import torch
+import pytest
+from pydantic import ValidationError
 
 from ser_lib.data.collate import SERCollator
 from ser_lib.data.audio import AudioLoader, AudioLoaderConfig
@@ -15,7 +17,8 @@ from ser_lib.data.validation import validate_compatibility
 from ser_lib.engine.checkpoint import load_checkpoint, save_checkpoint
 from ser_lib.engine.evaluator import evaluate
 from ser_lib.engine.trainer import Trainer, TrainerConfig
-from ser_lib.models.cnn_models import CNNBaseline
+from ser_lib.models.base import ModelOutput
+from ser_lib.models.cnn_models import CNNBaseline, CNNBaselineConfig
 from ser_lib.models.registry import model_registry
 from ser_lib.inference.offline import EmotionPredictor
 
@@ -34,6 +37,43 @@ def test_cnn_baseline_forward_and_registry():
     output = model(_batch())
     assert output.logits.shape == (2, 3)
     assert output.embeddings.shape == (2, 8)
+
+
+def test_cnn_config_round_trip_and_parameter_count():
+    model = CNNBaseline(feature_dim=4, num_classes=3, hidden_dim=8, dropout=0.1)
+    rebuilt = model_registry.create("cnn_baseline", **model.model_config)
+    assert rebuilt.model_config == model.model_config
+    assert model.parameter_count() == sum(p.numel() for p in model.parameters())
+    assert model.parameter_count(trainable_only=True) == model.parameter_count()
+    with pytest.raises(ValidationError):
+        CNNBaselineConfig(feature_dim=4, num_classes=3, unknown=True)
+
+
+def test_model_registry_exposes_and_validates_cnn_contract():
+    descriptor = model_registry.descriptor("cnn_baseline")
+    assert descriptor["input_layouts"] == {"features": "FT"}
+    assert descriptor["status"] == "stable"
+    params = model_registry.validate_config(
+        "cnn_baseline", {"feature_dim": 4, "num_classes": 2}
+    )
+    assert params == {"feature_dim": 4, "num_classes": 2, "hidden_dim": 128, "dropout": 0.2}
+
+
+def test_model_output_rejects_invalid_shapes():
+    with pytest.raises(ValueError, match="logits"):
+        ModelOutput(torch.randn(2))
+    with pytest.raises(ValueError, match="embeddings"):
+        ModelOutput(torch.randn(2, 3), embeddings=torch.randn(1, 4))
+    with pytest.raises(ValueError, match="loss"):
+        ModelOutput(torch.randn(2, 3), loss=torch.randn(2))
+
+
+def test_cnn_rejects_all_padding_sample():
+    batch = _batch()
+    batch.masks["features"][0] = False
+    model = CNNBaseline(feature_dim=4, num_classes=2, hidden_dim=8)
+    with pytest.raises(ValueError, match="有效时间步"):
+        model(batch)
 
 
 def test_model_compatibility_accepts_log_mel_shape_contract():

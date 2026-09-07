@@ -17,7 +17,7 @@ from typing import Any, Mapping
 
 import torch
 
-from ser_lib.data.errors import RepresentationError
+from ser_lib.data.errors import RepresentationError, SERDataError
 
 # =====================================================================
 # Layout 白名单（设计文档 §5.3）
@@ -201,7 +201,7 @@ class TensorSpec:
         *,
         key: str,
         uid: str | None = None,
-        error_cls: type[Exception] = RepresentationError,
+        error_cls: type[SERDataError] = RepresentationError,
     ) -> None:
         """校验单个 tensor 是否满足本 spec。
 
@@ -290,6 +290,7 @@ def validate_representation_output(
             )
         tensor = output.inputs[key]
         axis = spec.time_axis
+        assert axis is not None
         actual = tensor.shape[axis]
         if length != actual:
             raise RepresentationError(

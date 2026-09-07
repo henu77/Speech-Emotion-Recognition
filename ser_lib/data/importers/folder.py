@@ -8,7 +8,7 @@ from typing import Any, Mapping
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ser_lib.data.importers.base import ImportIssue, ImportPreview
-from ser_lib.data.manifest import DatasetManifest, load_meta, write_jsonl
+from ser_lib.data.manifest import DatasetManifest, write_jsonl
 from ser_lib.data.registry import ComponentDescriptor
 from ser_lib.data.types import AudioRecord
 

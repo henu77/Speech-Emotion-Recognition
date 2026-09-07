@@ -44,6 +44,7 @@ from ser_lib.data.importers import (
     ImportIssue,
     ImportPreview,
     JsonlImporter,
+    RavdessImporter,
     register_importers,
 )
 from ser_lib.data.manifest import (
@@ -53,6 +54,11 @@ from ser_lib.data.manifest import (
     write_jsonl,
 )
 from ser_lib.data.pipeline import SamplePipeline, build_components, build_pipeline
+from ser_lib.data.profiling import (
+    AudioProbeFailure,
+    DatasetAudioProfile,
+    profile_manifest_audio,
+)
 from ser_lib.data.registry import (
     ComponentDescriptor,
     Registry,
@@ -111,6 +117,7 @@ __all__ = [
     "CasiaImporter",
     "ImportPreview",
     "ImportIssue",
+    "RavdessImporter",
     "register_importers",
     # Pipeline / Dataset
     "SamplePipeline",
@@ -138,4 +145,5 @@ __all__ = [
     # Validation
     "ModelSpec",
     "validate_compatibility",
+    "AudioProbeFailure", "DatasetAudioProfile", "profile_manifest_audio",
 ]

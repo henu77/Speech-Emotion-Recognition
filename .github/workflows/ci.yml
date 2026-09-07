@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install package and tests
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
+      - name: Compile package
+        run: python -m compileall -q ser_lib
+      - name: Build distributions
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: python -m pip install build && python -m build
+      - name: Smoke-test built wheel
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          python -m venv --system-site-packages .wheel-smoke
+          .wheel-smoke/bin/python -m pip install --no-deps dist/*.whl
+          .wheel-smoke/bin/python -c "import ser_lib; print(ser_lib.__version__)"
+      - name: Run tests
+        run: python -m pytest -q
+
+  quality:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install quality tools
+        run: python -m pip install -e ".[dev]"
+      - name: Ruff
+        run: python -m ruff check ser_lib tests data benchmarks
+      - name: Type-check library
+        run: python -m mypy --follow-imports=skip ser_lib
+      - name: Coverage by package
+        run: python -m pytest --cov=ser_lib --cov-report=json -q && python scripts/check_coverage.py coverage.json

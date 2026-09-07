@@ -8,8 +8,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from typing import List, Dict, Any
-from data.base_processor import DatasetProcessor
+from typing import Any, Dict, List  # noqa: E402
+from data.base_processor import DatasetProcessor  # noqa: E402
 
 # CASIA 包含 6 种情感 (有些版本会包含 neutral 或更多，这里采用最经典的 6 分类版本：愤怒、悲伤、高兴、惊吓、恐惧、中性)
 EMOTION_MAPPING = {

@@ -10,17 +10,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import Field, field_validator
+
+from ser_lib.core.config import StrictConfig
 
 # 与 ser_lib/data/collate.py 中的 CollateStrategy 枚举保持一致
 BatchingType = Literal["dynamic", "fixed", "sliding"]
 
 
-class _StrictModel(BaseModel):
+class _StrictModel(StrictConfig):
     """全库配置模型基类：禁止未知字段。"""
-
-    model_config = ConfigDict(extra="forbid")
-
 
 class ComponentConfig(_StrictModel):
     """通用组件引用：``{type, params, probability}``。

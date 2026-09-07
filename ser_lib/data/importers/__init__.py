@@ -12,6 +12,7 @@ from ser_lib.data.importers.jsonl_importer import (
     normalize_raw_record,
     normalize_raw_records,
 )
+from ser_lib.data.importers.ravdess import RavdessImportConfig, RavdessImporter
 from ser_lib.data.registry import default_registry
 
 __all__ = [
@@ -26,6 +27,8 @@ __all__ = [
     "FolderImportConfig",
     "JsonlImporter",
     "JsonlImportConfig",
+    "RavdessImporter",
+    "RavdessImportConfig",
     "normalize_raw_record",
     "normalize_raw_records",
     "register_importers",
@@ -34,7 +37,7 @@ __all__ = [
 
 def register_importers(registry=default_registry) -> None:
     """把全部 importer 注册到注册表。"""
-    for cls in (FolderImporter, CsvImporter, JsonlImporter, CasiaImporter):
+    for cls in (FolderImporter, CsvImporter, JsonlImporter, CasiaImporter, RavdessImporter):
         registry.register(
             namespace="importer",
             name=cls.descriptor.id,

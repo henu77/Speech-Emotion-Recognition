@@ -21,7 +21,7 @@ class Representation(nn.Module, ABC):
 
     子类必须：
 
-    - 声明类属性 ``descriptor``（供桌面端枚举）；
+    - 声明类属性 ``descriptor``（供调用方枚举）；
     - 实现 ``output_specs``，返回 ``{key: TensorSpec}``；
     - 实现 ``forward(audio)`` 并保证输出满足自己声明的 specs。
     """
