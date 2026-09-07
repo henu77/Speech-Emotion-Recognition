@@ -16,20 +16,33 @@ cd Speech-Emotion-Recognition
 pip install -e .
 ```
 
-### 极简推理 API
+### 离线推理 API（开发阶段）
 
-只需 3 行代码即可完成一次离线音频的情感预测：
+当前版本已经打通 Log-Mel、CNN 和离线预测器的基础链路。仓库暂未附带预训练
+权重，因此需要先构建模型并加载可信的本地 checkpoint：
 
 ```python
-from ser_lib.inference.offline import EmotionRecognizer
+from ser_lib.data import AudioLoader, AudioLoaderConfig, BatchingConfig, SERCollator
+from ser_lib.data.pipeline import SamplePipeline
+from ser_lib.data.representations import LogMelRepresentation
+from ser_lib.engine import load_checkpoint
+from ser_lib.inference import EmotionPredictor
+from ser_lib.models import CNNBaseline
 
-# 初始化识别器，默认加载基线模型
-recognizer = EmotionRecognizer(model_type='cnn_mel', language='zh') 
+representation = LogMelRepresentation(sample_rate=16000, n_mels=80)
+pipeline = SamplePipeline(representation)
+model = CNNBaseline(feature_dim=80, num_classes=6)
+load_checkpoint("runs/demo/best.pt", model)
 
-# 传入音频文件路径进行预测
-result = recognizer.predict_file("path/to/test_audio.wav")
-print(f"检测到的情感是: {result['emotion']} (置信度: {result['confidence']:.2f})")
-
+predictor = EmotionPredictor(
+    model,
+    AudioLoader(AudioLoaderConfig(target_sample_rate=16000)),
+    pipeline,
+    SERCollator(pipeline.output_specs, BatchingConfig(type="dynamic")),
+    labels={0: "neutral", 1: "happy", 2: "angry", 3: "sad", 4: "surprise", 5: "fear"},
+)
+result = predictor.predict_file("path/to/test_audio.wav")
+print(result.emotion, result.confidence)
 ```
 
 ---
@@ -70,16 +83,17 @@ Speech-Emotion-Recognition/
 │   ├── core
 │   │   ├── config.py
 │   │   └── exceptions.py
-│   ├── datasets
-│   │   ├── base_dataset.py
-│   │   ├── configs
-│   │   │   ├── casia
-│   │   │   │   ├── data_report.md
-│   │   │   │   ├── test.jsonl
-│   │   │   │   ├── train.jsonl
-│   │   │   │   └── val.jsonl
-│   │   │   └── casia.yaml
-│   │   └── template_dataset.yaml
+│   ├── data
+│   │   ├── audio.py
+│   │   ├── manifest.py
+│   │   ├── dataset.py
+│   │   ├── pipeline.py
+│   │   ├── collate.py
+│   │   ├── representations
+│   │   ├── transforms
+│   │   └── importers
+│   ├── artifacts
+│   ├── service
 │   ├── engine
 │   │   ├── evaluator.py
 │   │   └── trainer.py

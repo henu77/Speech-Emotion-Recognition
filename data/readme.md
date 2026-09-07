@@ -1,5 +1,38 @@
 ## 一、 数据集介绍与支持 (Supported Datasets)
 
+本目录中的数据处理脚本统一输出新数据流水线格式，不再生成或使用按输入表示
+拆分的 Dataset 类。以 CASIA 为例：
+
+```bash
+python data/casia_process.py
+```
+
+默认输出到 `configs/datasets/casia/`：
+
+```text
+dataset.yaml          # 数据集根目录、划分和标签表
+train.jsonl
+val.jsonl
+test.jsonl
+data_waveform.yaml    # 原始波形 Representation
+data_log_mel.yaml     # Log-Mel Representation
+data_acoustic.yaml    # 声学组合 Representation
+data_report.md
+```
+
+加载时统一使用 `ser_lib.data`：
+
+```python
+from ser_lib.data import DatasetManifest, SERDataset, load_data_config
+from ser_lib.data import build_components, build_collator
+
+config = load_data_config("configs/datasets/casia/data_log_mel.yaml")
+manifest = DatasetManifest.load(config.manifest)
+loader, pipeline = build_components(config, train=True)
+dataset = SERDataset(manifest.resolved_records("train"), loader, pipeline)
+collator = build_collator(pipeline.output_specs, config.batching)
+```
+
 语音情感识别依赖于高质量的数据集。本项目深度内置了对多种经典与前沿中英文语料库的支持与预处理流程。以下为本库处理的主要数据集：
 
 ### 1. ESD (Emotional Speech Dataset)
