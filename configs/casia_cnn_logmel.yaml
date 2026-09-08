@@ -1,0 +1,46 @@
+schema_version: 1
+data:
+  schema_version: 1
+  manifest: ../data/casia-standard/dataset.yaml
+  labels:
+    0: {en: neutral, zh: 平静}
+    1: {en: happy, zh: 高兴}
+    2: {en: angry, zh: 愤怒}
+    3: {en: sad, zh: 悲伤}
+    4: {en: surprise, zh: 惊吓}
+    5: {en: fear, zh: 恐惧}
+  audio: {target_sample_rate: 16000, mono: true, normalize_peak: false}
+  representation:
+    type: log_mel
+    params: {sample_rate: 16000, n_fft: 400, win_length: 400, hop_length: 160, n_mels: 64}
+  waveform_transforms:
+    - {type: volume_scale, params: {gain_min: 0.85, gain_max: 1.15}, probability: 0.5}
+    - {type: gaussian_noise, params: {snr_db: 25.0}, probability: 0.25}
+  feature_transforms:
+    - {type: spec_masking, params: {time_mask_param: 15, freq_mask_param: 6}, probability: 0.4}
+  batching: {type: dynamic}
+model:
+  type: cnn_baseline
+  params: {feature_dim: 64, num_classes: 6, hidden_dim: 128, dropout: 0.2}
+trainer:
+  epochs: 15
+  device: cuda
+  seed: 42
+  deterministic: true
+  amp: true
+  gradient_clip_norm: 5.0
+  monitor: val_uar
+  early_stopping_patience: 5
+  early_stopping_min_delta: 0.001
+optimizer:
+  type: adamw
+  params: {learning_rate: 0.001, weight_decay: 0.0001}
+scheduler:
+  type: cosine
+  params: {t_max: 15, eta_min: 0.00001}
+loss:
+  type: cross_entropy
+  label_smoothing: 0.05
+sampling:
+  type: weighted
+output_dir: ../runs/casia-cnn-logmel

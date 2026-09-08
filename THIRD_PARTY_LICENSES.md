@@ -12,6 +12,9 @@
 | safetensors | 安全权重格式 | Apache-2.0 |
 | Transformers（可选） | 预训练语音编码器适配 | Apache-2.0 |
 
-数据集和预训练模型不因使用本库而获得重新许可。RAVDESS 等语料的许可提示见
-[`data/readme.md`](data/readme.md)，artifact 发布者必须在模型卡中填写训练数据、
+数据集和预训练模型不因使用本库而获得重新许可。本仓库只提供 importer，不下载、
+打包或重新分发语料。已知数据条款包括：RAVDESS 为 CC BY-NC-SA 4.0；CREMA-D
+数据库为 ODbL、单项内容为 DbCL。CASIA、CSEMOTIONS、ESD、EmotionTalk 等数据的
+使用者必须以各自官方发布页和实际取得副本附带的条款为准。详情见
+[`data/README.md`](data/README.md)，artifact 发布者必须在模型卡中填写训练数据、
 模型许可和限制。

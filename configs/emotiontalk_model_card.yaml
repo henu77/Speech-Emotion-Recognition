@@ -1,0 +1,9 @@
+description: EmotionTalk 七分类 CNN + Log-Mel 研究基线。
+intended_use: 验证中文对话场景中说话人独立的语音情感识别流程。
+dataset: BAAI EmotionTalk，默认按 speaker_id 划分训练、验证和测试集。
+language: [zh]
+license: 使用者须依据 EmotionTalk 官方数据条款确认数据及衍生模型的许可。
+limitations:
+  - 七类标签高度不均衡，因此配置使用 focal loss 和 WeightedRandomSampler。
+  - 默认说话人独立划分与官方对话划分不同，实验结果需注明划分策略。
+  - 标注描述和投票只作为审计元数据保留，当前基线仅使用音频与最终类别标签。

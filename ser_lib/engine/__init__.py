@@ -25,6 +25,12 @@ from ser_lib.engine.optim import (
     parse_optimizer_config,
     parse_scheduler_config,
 )
+from ser_lib.engine.objectives import (
+    ClassificationLoss,
+    LossConfig,
+    SamplingConfig,
+    build_weighted_sampler,
+)
 from ser_lib.engine.trainer import EpochResult, Trainer, seed_everything
 
 __all__ = [
@@ -34,6 +40,7 @@ __all__ = [
     "StepSchedulerConfig", "CosineSchedulerConfig",
     "parse_optimizer_config", "build_optimizer",
     "parse_scheduler_config", "build_scheduler",
+    "LossConfig", "SamplingConfig", "ClassificationLoss", "build_weighted_sampler",
     "Trainer", "EpochResult", "seed_everything",
     "ClassMetrics", "PredictionRecord", "EvaluationResult",
     "evaluate", "write_evaluation_report", "save_checkpoint", "load_checkpoint",

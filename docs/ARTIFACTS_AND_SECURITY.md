@@ -5,8 +5,8 @@ manifest。manifest 保存所有组成文件的 SHA-256；加载器先验证路�
 存在性、哈希及外部元数据一致性，再构建模型。
 
 ```bash
-ser artifact export --config configs/experiment.yaml \
-  --checkpoint runs/checkpoints/epoch-0010.pt --destination artifacts/model
+ser artifact export --config configs/cnn_logmel.yaml \
+  --checkpoint runs/cnn-logmel/checkpoints/best.pt --destination artifacts/model
 ser artifact verify artifacts/model --json
 ser artifact inspect artifacts/model --json
 ```

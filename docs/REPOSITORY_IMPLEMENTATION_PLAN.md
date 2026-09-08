@@ -6,7 +6,7 @@
 >
 > 基线版本：`9253df8`（2026-09-07）。数据层详细契约见 [`DATA_PIPELINE_REFACTOR_PLAN.md`](./DATA_PIPELINE_REFACTOR_PLAN.md)。
 
-## 实施进度（2026-09-07）
+## 实施进度（2026-09-08）
 
 - W01 已完成首轮实现：严格配置基类、版本化 YAML 读取、确定性路径解析、统一根异常、结构化事件、取消令牌和库日志工具已经落地；数据异常已接入统一根异常。
 - W02 已完成：建立 Windows/Linux × Python 3.10/3.12 CI、发行包构建、编译检查、pytest、完整 Pyflakes/Ruff 和全库 Mypy 门禁。
@@ -24,7 +24,8 @@
 - W14 已完成首轮实现：新增可选 `hf_audio_classifier` 预训练语音编码器适配，默认仅本地加载并禁用远程代码；支持冻结、mask pooling、采样率预检，并将 encoder 架构配置固化进 artifact 以便脱离原模型路径恢复。
 - W15 已完成首轮实现：新增严格 RAVDESS 官方文件名适配器及许可提示，不包含下载逻辑；数据 profile 可统计片段时长、采样率、声道和损坏文件；新增带环境指纹、原子 JSON 结果及回归阈值比较的可重复 benchmark 工具。
 - W16 已完成第一阶段：补齐 MIT License、贡献/安全/变更/第三方许可清单及安装、数据、模型、训练 CLI、artifact/API 文档；CI 增加 macOS、wheel smoke test 和分包覆盖门禁。Notebook 经审计仅为 Markdown 提纲，已从“可执行教程”声明中降级，仍待逐篇实现。
-- 当前本地验收：sdist/wheel 构建通过、完整 Ruff/Pyflakes 通过、全库 Mypy 通过、`123 passed`；分包覆盖率 Core 92.65%、Artifacts 90.76%、Engine 91.33%、Inference 89.03%、Models 87.14%、Data 66.71%、CLI 71.62%。
+- W17 已完成第一阶段：新增 CSEMOTIONS、ESD、CREMA-D 和 EmotionTalk 专用 importer、训练配置与模型卡；所有本地数据均完成真实扫描、标准 manifest 转换和全量音频探测。EmotionTalk 进一步完成 3 epoch GPU 训练、最佳 artifact 导出和独立测试集评估。
+- 当前本地验收：sdist/wheel 构建通过、完整 Ruff/Pyflakes 通过、全库 Mypy 通过；配置模板可构建，真实 WAV 单 epoch CPU/CUDA 冒烟训练通过，完整测试基线不低于 `151 passed`。分包覆盖率门禁已经接入 CI。
 
 ## 1. 项目目标与边界
 
@@ -68,12 +69,12 @@
 | `ser_lib.inference` | 完成 | 单文件/真实批量推理、滑窗聚合、结果导出、纯 PCM 流式会话 | 缺系统级冷启动、吞吐、峰值内存性能报告 |
 | `ser_lib.core` | 完成 | 严格配置、版本检查、路径、根异常、事件、取消和日志 | 后续随业务模块扩展事件字段 |
 | `ser_lib.cli` | 完成 | 组件、dataset、train、evaluate、predict 与 artifact 命令闭环，支持 JSON 输出 | 后续补 Ctrl+C 进程级集成测试和更多覆盖参数 |
-| 数据处理工具 | 部分完成 | 文件夹、CSV、JSONL、CASIA、RAVDESS importer，已接入 dataset CLI | 缺恢复执行和更多适配器 |
+| 数据处理工具 | 部分完成 | 文件夹、CSV、JSONL、CASIA、RAVDESS、CSEMOTIONS、ESD、CREMA-D、EmotionTalk importer，已接入 dataset CLI | 缺 IEMOCAP、MELD 等适配器 |
 | Benchmark | 完成 | 数据管线人工基准、环境化 JSON 结果和回归阈值比较 | 后续积累各平台正式基线数据 |
-| 文档与教程 | 部分完成 | README、安装/数据/模型/CLI/artifact 文档和 0–7 课程提纲 | Notebook 尚无可执行代码；缺完整 API reference |
-| 工程化 | 部分完成 | `pyproject.toml`、pytest、跨平台 CI、发行构建、完整 Pyflakes/Ruff 与全库 Mypy | 缺覆盖率分层门槛、macOS smoke test 和发布自动化 |
+| 文档与教程 | 部分完成 | README、安装/数据/模型/CLI/artifact 文档、实验配置、Python 示例和 0–7 课程提纲 | Notebook 尚无可执行代码；API reference 仍需深化 |
+| 工程化 | 部分完成 | `pyproject.toml`、pytest、Windows/Linux/macOS CI、发行构建、训练 smoke test、分包覆盖率门禁、Ruff 与全库 Mypy | 缺正式发布自动化和真实平台性能基线 |
 
-移除服务专属代码并完成 W01–W15 后，当前自动化测试基线为 `117 passed`，后续不得只报告新增测试而忽略全量回归。
+移除服务专属代码并完成 W01–W17 第一阶段后，当前自动化测试基线为 `151 passed`，后续不得只报告新增测试而忽略全量回归。
 
 ## 3. 目标模块与依赖方向
 
@@ -175,7 +176,7 @@ CLI / 用户 Python 代码
 - 定义 `ExperimentConfig`，组合数据、模型、优化器、调度器和输出；
 - 实现 seed、设备策略、AMP、梯度裁剪和梯度累积；
 - 优化器和调度器使用注册表或白名单，禁止 `eval`；
-- 增加 early stopping、best/last checkpoint 和完整恢复；
+- 已实现验证集评估、early stopping、best/last checkpoint 和监控状态恢复；
 - 指标至少包括 loss、accuracy、UAR、WAR、macro-F1 和 confusion matrix；
 - 类别不平衡支持 class weight 与 sampler，并记录策略；
 - Trainer 通过 callback 产生事件并支持安全取消；
@@ -305,6 +306,7 @@ Artifact v2、安全权重、模型卡、批量推理和 CLI artifact/predict �
 | W14 | 预训练编码器适配 | W03、W08 | 可选模型族 |
 | W15 | 数据适配器与 benchmark | W02 | 数据扩展报告 |
 | W16 | 文档、教程、发布 QA | 持续 | 稳定发布 |
+| W17 | 扩展公开数据集 importer 与真实训练验收 | W05、W10、W15 | CSEMOTIONS、ESD、CREMA-D、EmotionTalk 与验证报告 |
 
 执行规则：
 

@@ -1,0 +1,51 @@
+schema_version: 1
+data:
+  schema_version: 1
+  manifest: ../data/standard/dataset.yaml
+  labels:
+    0: {en: neutral, zh: 中性}
+    1: {en: happy, zh: 高兴}
+    2: {en: sad, zh: 悲伤}
+    3: {en: angry, zh: 愤怒}
+    4: {en: fearful, zh: 恐惧}
+    5: {en: surprised, zh: 惊讶}
+  audio:
+    target_sample_rate: 16000
+    mono: true
+    normalize_peak: false
+  representation:
+    type: log_mel
+    params: {sample_rate: 16000, n_fft: 400, win_length: 400, hop_length: 160, n_mels: 64}
+  waveform_transforms:
+    - {type: volume_scale, params: {gain_min: 0.8, gain_max: 1.2}, probability: 0.5}
+  feature_transforms:
+    - {type: spec_masking, params: {time_mask_param: 20, freq_mask_param: 8}, probability: 0.5}
+  batching: {type: dynamic}
+model:
+  type: cnn_baseline
+  params: {feature_dim: 64, num_classes: 6, hidden_dim: 128, dropout: 0.2}
+trainer:
+  epochs: 30
+  device: cpu
+  seed: 42
+  deterministic: true
+  amp: false
+  gradient_clip_norm: 5.0
+  gradient_accumulation_steps: 1
+  monitor: val_uar
+  early_stopping_patience: 7
+  early_stopping_min_delta: 0.001
+  save_best: true
+  save_last: true
+optimizer:
+  type: adamw
+  params: {learning_rate: 0.001, weight_decay: 0.0001}
+scheduler:
+  type: cosine
+  params: {t_max: 30, eta_min: 0.00001}
+loss:
+  type: cross_entropy
+  label_smoothing: 0.05
+sampling:
+  type: weighted
+output_dir: ../runs/cnn-logmel

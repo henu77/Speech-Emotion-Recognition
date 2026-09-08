@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import torchaudio.transforms as T
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -68,8 +70,9 @@ class MFCCConfig(SpectralConfigBase):
 
     n_mels: int = Field(default=80, ge=16, le=512)
     n_mfcc: int = Field(default=40, ge=10, le=128)
-    mel_norm: str | None = "slaney"
-    mel_scale: str = "htk"
+    dct_norm: Literal["ortho"] | None = "ortho"
+    mel_norm: Literal["slaney"] | None = "slaney"
+    mel_scale: Literal["htk", "slaney"] = "htk"
 
     @model_validator(mode="after")
     def _validate_mfcc(self) -> "MFCCConfig":
@@ -245,7 +248,7 @@ class MFCCRepresentation(_SpectralRepresentationBase):
         self.transform = T.MFCC(
             sample_rate=config.sample_rate,
             n_mfcc=config.n_mfcc,
-            norm=config.mel_norm,
+            norm=config.dct_norm,
             melkwargs={
                 "n_fft": config.n_fft,
                 "win_length": config.win_length,

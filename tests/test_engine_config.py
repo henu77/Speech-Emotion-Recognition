@@ -158,3 +158,46 @@ def test_experiment_preflight_rejects_incompatible_feature_dimension(tmp_path: P
     })
     with pytest.raises(CompatibilityError, match="feature_dim"):
         build_experiment_components(config)
+
+
+def test_trainer_validation_best_last_and_early_stopping(tmp_path: Path):
+    checkpoint_dir = tmp_path / "checkpoints"
+    model = CNNBaseline(feature_dim=4, num_classes=2, hidden_dim=6, dropout=0)
+    trainer = Trainer(
+        model,
+        TrainerConfig(
+            epochs=5,
+            learning_rate=1e-30,
+            checkpoint_dir=checkpoint_dir,
+            monitor="val_accuracy",
+            early_stopping_patience=2,
+        ),
+    )
+
+    history = trainer.fit([_batch()], val_batches=[_batch()])
+
+    assert [item.epoch for item in history] == [1, 2, 3]
+    assert all(item.validation is not None for item in history)
+    assert trainer.best_epoch == 1
+    assert trainer.epochs_without_improvement == 2
+    assert (checkpoint_dir / "best.pt").is_file()
+    assert (checkpoint_dir / "last.pt").is_file()
+    assert (checkpoint_dir / "epoch-0003.pt").is_file()
+
+    resumed = Trainer(
+        CNNBaseline(feature_dim=4, num_classes=2, hidden_dim=6, dropout=0),
+        trainer.config,
+    )
+    resumed.resume_from(checkpoint_dir / "last.pt")
+    assert resumed.last_completed_epoch == 3
+    assert resumed.best_epoch == 1
+    assert resumed.epochs_without_improvement == 2
+
+
+def test_early_stopping_requires_validation_batches():
+    trainer = Trainer(
+        CNNBaseline(feature_dim=4, num_classes=2, hidden_dim=6, dropout=0),
+        TrainerConfig(epochs=2, early_stopping_patience=1),
+    )
+    with pytest.raises(ValueError, match="val_batches"):
+        trainer.fit([_batch()])

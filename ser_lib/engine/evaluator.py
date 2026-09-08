@@ -46,6 +46,12 @@ class EvaluationResult:
     war: float
     per_class: tuple[ClassMetrics, ...]
     predictions: tuple[PredictionRecord, ...]
+    weighted_precision: float
+    weighted_recall: float
+    weighted_f1: float
+    balanced_accuracy: float
+    matthews_correlation_coefficient: float
+    cohen_kappa: float
 
     def summary_dict(self) -> dict[str, object]:
         """返回不含样本明细的 JSON-safe 聚合报告。"""
@@ -55,6 +61,12 @@ class EvaluationResult:
             "war": self.war,
             "uar": self.uar,
             "macro_f1": self.macro_f1,
+            "weighted_precision": self.weighted_precision,
+            "weighted_recall": self.weighted_recall,
+            "weighted_f1": self.weighted_f1,
+            "balanced_accuracy": self.balanced_accuracy,
+            "matthews_correlation_coefficient": self.matthews_correlation_coefficient,
+            "cohen_kappa": self.cohen_kappa,
             "sample_count": self.sample_count,
             "confusion_matrix": self.confusion_matrix.tolist(),
             "per_class": [asdict(item) for item in self.per_class],
@@ -85,6 +97,7 @@ def evaluate(
     labels: Mapping[int, str] | None = None,
     event_callback: EventCallback | None = None,
     cancellation: CancellationCheck | None = None,
+    loss_fn: torch.nn.Module | None = None,
 ) -> EvaluationResult:
     """评估分类模型，并保留每个 batch 行对应的样本预测。
 
@@ -98,6 +111,8 @@ def evaluate(
     if target_device.type == "cuda" and not torch.cuda.is_available():
         raise ValueError("评估请求 CUDA，但当前环境不可用")
     model.to(target_device)
+    if loss_fn is not None:
+        loss_fn.to(target_device)
     was_training = model.training
     model.eval()
     confusion = torch.zeros(num_classes, num_classes, dtype=torch.long)
@@ -120,8 +135,10 @@ def evaluate(
                 )
             if torch.any(labels_tensor < 0) or torch.any(labels_tensor >= num_classes):
                 raise ValueError("评估标签超出 [0, num_classes) 范围")
-            loss = output.loss if output.loss is not None else F.cross_entropy(
-                output.logits, labels_tensor
+            loss = (
+                loss_fn(output.logits, labels_tensor) if loss_fn is not None
+                else output.loss if output.loss is not None
+                else F.cross_entropy(output.logits, labels_tensor)
             )
             if not torch.isfinite(loss):
                 raise FloatingPointError("评估 loss 为 NaN/Inf")
@@ -167,6 +184,24 @@ def evaluate(
     accuracy = float(true_positive.sum().item() / total)
     # WAR 是按 support 加权的 recall；单标签分类中与 accuracy 数值相同。
     war = float((recall * support).sum().item() / total)
+    weighted_precision = float((precision * support).sum().item() / total)
+    weighted_f1 = float((f1 * support).sum().item() / total)
+    predicted_float = predicted_count.to(torch.float64)
+    correct = true_positive.sum()
+    sample_total = torch.tensor(float(total), dtype=torch.float64)
+    mcc_denominator = torch.sqrt(
+        ((sample_total.square() - predicted_float.square().sum())
+        * (sample_total.square() - support.square().sum())).clamp_min(0)
+    )
+    mcc = (
+        float((correct * sample_total - (predicted_float * support).sum()) / mcc_denominator)
+        if float(mcc_denominator) > 0 else 0.0
+    )
+    expected_agreement = float((predicted_float * support).sum() / sample_total.square())
+    kappa = (
+        (accuracy - expected_agreement) / (1.0 - expected_agreement)
+        if expected_agreement < 1.0 else 0.0
+    )
     per_class = tuple(
         ClassMetrics(
             label_id=index,
@@ -188,6 +223,12 @@ def evaluate(
         war=war,
         per_class=per_class,
         predictions=tuple(records),
+        weighted_precision=weighted_precision,
+        weighted_recall=war,
+        weighted_f1=weighted_f1,
+        balanced_accuracy=float(recall[present].mean()),
+        matthews_correlation_coefficient=mcc,
+        cohen_kappa=kappa,
     )
 
 

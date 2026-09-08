@@ -12,6 +12,7 @@ from ser_lib.data.config import BatchingConfig
 from ser_lib.data.dataset import SERDataset
 from ser_lib.data.errors import AudioNotFoundError, InvalidAudioSegmentError
 from ser_lib.data.pipeline import SamplePipeline
+from ser_lib.data.representations.spectral import MFCCRepresentation
 from ser_lib.data.representations.waveform import RawWaveform
 from ser_lib.data.types import AudioRecord
 
@@ -85,3 +86,15 @@ def test_minimal_waveform_pipeline_end_to_end(tmp_path: Path):
     assert batch.lengths["waveform"].tolist() == [400, 640]
     assert batch.masks["waveform"].sum(dim=1).tolist() == [400, 640]
     assert batch.labels.tolist() == [0, 1]
+
+
+def test_default_mfcc_representation_builds_and_extracts_features(tmp_path: Path):
+    path = tmp_path / "mfcc.wav"
+    _write_pcm_wav(path, sample_rate=16000, seconds=0.1)
+    audio = AudioLoader().load(AudioRecord(uid="mfcc", audio_path=path))
+    representation = MFCCRepresentation()
+
+    output = representation(audio)
+
+    assert output.inputs["features"].shape[0] == 40
+    assert output.lengths["features"] == output.inputs["features"].shape[1]

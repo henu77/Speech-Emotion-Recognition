@@ -1,0 +1,9 @@
+description: CSEMOTIONS 七分类 CNN + Log-Mel 研究基线。
+intended_use: 验证中文多说话人 SER 的训练、评估和 Artifact 工作流。
+dataset: CSEMOTIONS，6位说话人训练、2位验证、2位测试，共4160条音频。
+language: [zh]
+license: 使用者必须依据 CSEMOTIONS 官方发布条款确认数据和衍生模型的许可。
+limitations:
+  - 数据来自有限数量的专业说话人，不能代表开放场景中的自然情感分布。
+  - 该轻量 CNN 是工程基线，不应直接用于高风险决策。
+  - 性别字段由数据集 speaker ID 前缀推导，仅用于划分平衡检查。

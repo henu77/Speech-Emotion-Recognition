@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 
@@ -26,6 +27,8 @@ from ser_lib.engine.optim import (
 )
 from ser_lib.models.base import SERModel
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True, slots=True)
 class EpochResult:
@@ -34,6 +37,7 @@ class EpochResult:
     accuracy: float
     sample_count: int
     optimizer_steps: int = 0
+    validation: dict[str, float] | None = None
 
 
 def seed_everything(seed: int, *, deterministic: bool = True) -> None:
@@ -66,6 +70,7 @@ class Trainer:
         *,
         optimizer: torch.optim.Optimizer | None = None,
         scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
+        loss_fn: torch.nn.Module | None = None,
         event_callback: EventCallback | None = None,
         cancellation: CancellationCheck | None = None,
     ) -> None:
@@ -87,10 +92,14 @@ class Trainer:
             weight_decay=self.config.weight_decay,
         )
         self.scheduler = scheduler
+        self.loss_fn = loss_fn.to(self.device) if loss_fn is not None else None
         self.event_callback = event_callback
         self.cancellation = cancellation
         self._scaler = torch.cuda.amp.GradScaler() if self.config.amp else None
         self.last_completed_epoch = 0
+        self.best_metric: float | None = None
+        self.best_epoch: int | None = None
+        self.epochs_without_improvement = 0
 
     @classmethod
     def from_experiment(
@@ -118,11 +127,17 @@ class Trainer:
         optimizer = build_optimizer(model.parameters(), optimizer_config)
         scheduler_config: SchedulerConfig | None = parse_scheduler_config(experiment.scheduler)
         scheduler = build_scheduler(optimizer, scheduler_config)
+        from ser_lib.engine.objectives import ClassificationLoss
+
+        num_classes = model.model_spec.num_classes
+        if num_classes is None:
+            raise ValueError("分类训练要求模型声明 num_classes")
         return cls(
             model,
             experiment.trainer,
             optimizer=optimizer,
             scheduler=scheduler,
+            loss_fn=ClassificationLoss(experiment.loss, num_classes),
             event_callback=event_callback,
             cancellation=cancellation,
         )
@@ -171,8 +186,11 @@ class Trainer:
                 enabled=self.config.amp,
             ):
                 output = self.model(batch)
-                loss = output.loss if output.loss is not None else F.cross_entropy(
-                    output.logits, labels
+                loss = (
+                    self.loss_fn(output.logits, labels)
+                    if self.loss_fn is not None
+                    else output.loss if output.loss is not None
+                    else F.cross_entropy(output.logits, labels)
                 )
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"训练 loss 非有限值: {loss.item()}")
@@ -217,11 +235,14 @@ class Trainer:
         self,
         train_batches: Iterable[SERBatch] | Callable[[], Iterable[SERBatch]],
         *,
+        val_batches: Iterable[SERBatch] | Callable[[], Iterable[SERBatch]] | None = None,
         on_epoch_end: Callable[[EpochResult], None] | None = None,
         start_epoch: int | None = None,
     ) -> list[EpochResult]:
         from ser_lib.engine.checkpoint import save_checkpoint
 
+        if self.config.early_stopping_patience is not None and val_batches is None:
+            raise ValueError("启用 early stopping 时必须提供 val_batches")
         first_epoch = self.last_completed_epoch + 1 if start_epoch is None else start_epoch
         if first_epoch < 1:
             raise ValueError("start_epoch 必须 >= 1")
@@ -230,12 +251,60 @@ class Trainer:
             self._check_cancelled()
             batches = train_batches() if callable(train_batches) else train_batches
             result = self.train_epoch(batches, epoch=epoch)
-            history.append(result)
             if self.scheduler is not None:
                 self.scheduler.step()
             self.last_completed_epoch = epoch
+            improved = False
+            if val_batches is not None and epoch % self.config.validation_interval == 0:
+                from ser_lib.engine.evaluator import evaluate
+
+                validation_batches = val_batches() if callable(val_batches) else val_batches
+                num_classes = self.model.model_spec.num_classes
+                if num_classes is None:
+                    raise ValueError("验证要求模型声明 num_classes")
+                validation_result = evaluate(
+                    self.model,
+                    validation_batches,
+                    num_classes=num_classes,
+                    device=self.device,
+                    event_callback=self.event_callback,
+                    cancellation=self.cancellation,
+                    loss_fn=self.loss_fn,
+                )
+                validation = {
+                    "loss": validation_result.loss,
+                    "accuracy": validation_result.accuracy,
+                    "war": validation_result.war,
+                    "uar": validation_result.uar,
+                    "macro_f1": validation_result.macro_f1,
+                }
+                result = replace(result, validation=validation)
+                for name, value in validation.items():
+                    self._emit(MetricEvent(name, value, step=epoch, split="val"))
+                monitored = validation[self.config.monitor.removeprefix("val_")]
+                improved = self._is_improved(monitored)
+                if improved:
+                    self.best_metric = monitored
+                    self.best_epoch = epoch
+                    self.epochs_without_improvement = 0
+                else:
+                    self.epochs_without_improvement += 1
+            history.append(result)
+            logger.info(
+                "epoch=%d train_loss=%.6f train_accuracy=%.4f validation=%s",
+                epoch, result.loss, result.accuracy, result.validation,
+            )
             self._check_cancelled()
             if self.config.checkpoint_dir is not None:
+                metrics = {"loss": result.loss, "accuracy": result.accuracy}
+                if result.validation is not None:
+                    metrics.update({f"val_{k}": v for k, v in result.validation.items()})
+                metadata = {
+                    "best_metric": self.best_metric,
+                    "best_epoch": self.best_epoch,
+                    "epochs_without_improvement": self.epochs_without_improvement,
+                    "monitor": self.config.monitor,
+                }
                 save_checkpoint(
                     self.config.checkpoint_dir / f"epoch-{epoch:04d}.pt",
                     self.model,
@@ -243,12 +312,40 @@ class Trainer:
                     epoch=epoch,
                     scheduler=self.scheduler,
                     scaler=self._scaler,
-                    metrics={"loss": result.loss, "accuracy": result.accuracy},
+                    metrics=metrics,
+                    metadata=metadata,
                     trainer_config=self.config.model_dump(mode="json"),
                 )
+                if self.config.save_last:
+                    save_checkpoint(
+                        self.config.checkpoint_dir / "last.pt", self.model, self.optimizer,
+                        epoch=epoch, scheduler=self.scheduler, scaler=self._scaler,
+                        metrics=metrics, metadata=metadata,
+                        trainer_config=self.config.model_dump(mode="json"),
+                    )
+                if improved and self.config.save_best:
+                    save_checkpoint(
+                        self.config.checkpoint_dir / "best.pt", self.model, self.optimizer,
+                        epoch=epoch, scheduler=self.scheduler, scaler=self._scaler,
+                        metrics=metrics, metadata=metadata,
+                        trainer_config=self.config.model_dump(mode="json"),
+                    )
             if on_epoch_end is not None:
                 on_epoch_end(result)
+            if (
+                self.config.early_stopping_patience is not None
+                and self.epochs_without_improvement >= self.config.early_stopping_patience
+            ):
+                break
         return history
+
+    def _is_improved(self, value: float) -> bool:
+        if self.best_metric is None:
+            return True
+        delta = self.config.early_stopping_min_delta
+        if self.config.monitor == "val_loss":
+            return value < self.best_metric - delta
+        return value > self.best_metric + delta
 
     def resume_from(self, path, *, restore_rng: bool = True) -> dict:
         """恢复训练状态，并使下次 ``fit`` 从 checkpoint 的下一 epoch 开始。"""
@@ -268,6 +365,14 @@ class Trainer:
         if not isinstance(epoch, int) or epoch < 0:
             raise ValueError("checkpoint epoch 非法")
         self.last_completed_epoch = epoch
+        metadata = payload.get("metadata") or {}
+        if metadata.get("monitor") in (None, self.config.monitor):
+            best_metric = metadata.get("best_metric")
+            best_epoch = metadata.get("best_epoch")
+            without_improvement = metadata.get("epochs_without_improvement", 0)
+            self.best_metric = float(best_metric) if best_metric is not None else None
+            self.best_epoch = int(best_epoch) if best_epoch is not None else None
+            self.epochs_without_improvement = int(without_improvement)
         return payload
 
 

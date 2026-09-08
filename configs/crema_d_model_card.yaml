@@ -1,0 +1,9 @@
+description: CREMA-D 六分类 CNN + Log-Mel 研究基线。
+intended_use: 验证英文、多说话人、人口统计分层 SER 的训练与评估工作流。
+dataset: CREMA-D，默认按性别分层并按演员划分训练、验证和测试集。
+language: [en]
+license: CREMA-D 数据库采用 ODbL，单项内容采用 DbCL；使用者须确认衍生物适用义务。
+limitations:
+  - 默认标签来自演员被要求表达的情感，不是众包语音多数投票标签。
+  - 数据为固定语句的表演型语音，不能代表所有自然会话场景。
+  - 人口统计字段仅用于审计和划分，不应作为模型输入或个体决策依据。

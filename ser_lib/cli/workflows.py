@@ -24,6 +24,7 @@ from ser_lib.engine import (
     load_checkpoint,
     load_experiment_config,
     write_evaluation_report,
+    build_weighted_sampler,
 )
 from ser_lib.inference import (
     BatchEmotionPredictor,
@@ -40,13 +41,24 @@ def _labels(meta_labels: dict[int, dict[str, Any]]) -> dict[int, str]:
     }
 
 
-def _loader(manifest, split, components, *, batch_size, workers, shuffle=False):
+def _loader(
+    manifest, split, components, *, batch_size, workers, shuffle=False,
+    sampling=None, seed=42, num_classes=None,
+):
     records = manifest.resolved_records(split)
     dataset = SERDataset(records, components.audio_loader, components.pipeline)
+    sampler = None
+    if sampling is not None:
+        if num_classes is None:
+            raise ValueError("构建训练 sampler 时必须提供 num_classes")
+        sampler = build_weighted_sampler(
+            dataset.get_labels(), num_classes=num_classes, config=sampling, seed=seed
+        )
     return DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=shuffle,
+        shuffle=shuffle and sampler is None,
+        sampler=sampler,
         num_workers=workers,
         collate_fn=components.collator,
     )
@@ -70,13 +82,35 @@ def train_experiment(
     components = build_experiment_components(config, train=True)
     manifest = DatasetManifest.load(config.data.manifest)
     batches = _loader(
-        manifest, split, components, batch_size=batch_size, workers=workers, shuffle=True
+        manifest, split, components, batch_size=batch_size, workers=workers, shuffle=True,
+        sampling=config.sampling, seed=config.trainer.seed,
+        num_classes=components.model.model_spec.num_classes,
     )
     trainer = Trainer.from_experiment(components.model, config)
+    val_batches = None
+    if "val" in manifest.meta.splits:
+        validation_components = build_experiment_components(config, train=False)
+        val_batches = _loader(
+            manifest, "val", validation_components,
+            batch_size=batch_size, workers=workers,
+        )
     if resume is not None:
         trainer.resume_from(resume)
-    history = trainer.fit(lambda: batches)
     config.output_dir.mkdir(parents=True, exist_ok=True)
+    metrics_log = config.output_dir / "metrics.jsonl"
+    if resume is None:
+        metrics_log.write_text("", encoding="utf-8")
+
+    def log_epoch(result) -> None:
+        with metrics_log.open("a", encoding="utf-8", newline="\n") as stream:
+            stream.write(json.dumps(asdict(result), ensure_ascii=False) + "\n")
+            stream.flush()
+
+    history = trainer.fit(
+        lambda: batches,
+        val_batches=(lambda: val_batches) if val_batches is not None else None,
+        on_epoch_end=log_epoch,
+    )
     history_path = config.output_dir / "history.json"
     temporary = history_path.with_suffix(".json.tmp")
     temporary.write_text(
@@ -92,6 +126,11 @@ def train_experiment(
     return {
         "output_dir": str(config.output_dir),
         "last_checkpoint": str(last_checkpoint) if last_checkpoint else None,
+        "best_checkpoint": str(config.trainer.checkpoint_dir / "best.pt")
+        if trainer.best_epoch is not None and config.trainer.checkpoint_dir else None,
+        "best_epoch": trainer.best_epoch,
+        "best_metric": trainer.best_metric,
+        "metrics_log": str(metrics_log),
         "history": [asdict(item) for item in history],
         "resumed_from": str(resume) if resume else None,
     }

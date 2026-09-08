@@ -10,7 +10,7 @@
 python -m venv .venv
 python -m pip install -e ".[test,dev]"
 python -m pytest -q
-python -m ruff check ser_lib tests data benchmarks
+python -m ruff check ser_lib tests data benchmarks scripts examples
 python -m mypy --follow-imports=skip ser_lib
 python -m build
 ```
@@ -20,5 +20,6 @@ python -m build
 应通过 importer 或 Representation 扩展，禁止重新加入按 Waveform/MFCC/Mel
 拆分的 Dataset。
 
-测试至少覆盖正常路径、无效配置、变长 batch 和序列化往返。不得提交数据集、
-模型权重、个人路径、密钥或未经许可的媒体。
+测试至少覆盖正常路径、无效配置、变长 batch 和序列化往返。新增 importer 还必须
+覆盖缺失文件、非法元数据、标签映射和说话人泄漏检查，并使用合成 fixture 测试。
+不得提交数据集、模型权重、`runs/`、`artifacts/`、个人路径、密钥或未经许可的媒体。

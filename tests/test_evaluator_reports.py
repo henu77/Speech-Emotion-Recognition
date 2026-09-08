@@ -60,6 +60,12 @@ def test_evaluate_returns_known_ser_metrics_and_predictions():
     assert result.war == pytest.approx(0.75)
     assert result.uar == pytest.approx((1.0 + 0.5 + 1.0) / 3)
     assert result.macro_f1 == pytest.approx((2 / 3 + 2 / 3 + 1.0) / 3)
+    assert result.weighted_precision == pytest.approx(0.875)
+    assert result.weighted_recall == pytest.approx(0.75)
+    assert result.weighted_f1 == pytest.approx(0.75)
+    assert result.balanced_accuracy == pytest.approx(result.uar)
+    assert result.matthews_correlation_coefficient == pytest.approx(0.7)
+    assert result.cohen_kappa == pytest.approx(7 / 11)
     assert result.loss > 0
     assert result.confusion_matrix.tolist() == [[1, 0, 0], [1, 1, 0], [0, 0, 1]]
     assert [item.support for item in result.per_class] == [1, 2, 1]

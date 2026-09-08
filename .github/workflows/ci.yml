@@ -23,7 +23,7 @@ jobs:
       - name: Install package and tests
         run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
       - name: Compile package
-        run: python -m compileall -q ser_lib
+        run: python -m compileall -q ser_lib scripts examples
       - name: Build distributions
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: python -m pip install build && python -m build
@@ -35,6 +35,8 @@ jobs:
           .wheel-smoke/bin/python -c "import ser_lib; print(ser_lib.__version__)"
       - name: Run tests
         run: python -m pytest -q
+      - name: End-to-end training smoke test
+        run: python scripts/smoke_train_epoch.py --device cpu
 
   quality:
     name: Static checks

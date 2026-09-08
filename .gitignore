@@ -19,4 +19,6 @@ htmlcov/
 build/
 dist/
 .venv/
+runs/
+artifacts/
 

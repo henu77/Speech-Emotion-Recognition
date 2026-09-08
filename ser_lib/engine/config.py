@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, field_validator
 
 from ser_lib.core.config import StrictConfig, load_versioned_config
 from ser_lib.data.config import DataConfig
+from ser_lib.engine.objectives import LossConfig, SamplingConfig
 
 if TYPE_CHECKING:
     from ser_lib.data.audio import AudioLoader
@@ -36,6 +37,14 @@ class TrainerConfig(StrictConfig):
     gradient_clip_norm: float | None = Field(default=None, gt=0)
     gradient_accumulation_steps: int = Field(default=1, ge=1)
     checkpoint_dir: Path | None = None
+    validation_interval: int = Field(default=1, ge=1)
+    monitor: Literal[
+        "val_loss", "val_accuracy", "val_uar", "val_macro_f1"
+    ] = "val_loss"
+    early_stopping_patience: int | None = Field(default=None, ge=1)
+    early_stopping_min_delta: float = Field(default=0.0, ge=0.0)
+    save_best: bool = True
+    save_last: bool = True
     # 兼容旧调用；使用 ExperimentConfig 时由 optimizer 节点覆盖。
     learning_rate: float = Field(default=1e-3, gt=0)
     weight_decay: float = Field(default=0.0, ge=0)
@@ -52,6 +61,8 @@ class ExperimentConfig(StrictConfig):
         default_factory=lambda: {"type": "adamw", "params": {}}
     )
     scheduler: dict[str, Any] | None = None
+    loss: LossConfig = Field(default_factory=LossConfig)
+    sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     output_dir: Path = Path("runs/default")
 
     @field_validator("optimizer")

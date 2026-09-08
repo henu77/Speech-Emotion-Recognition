@@ -16,16 +16,17 @@
   Log-Mel、MFCC 及组合输入，不再按特征类型维护多个 Dataset。
 - 标准数据集格式：使用 `dataset.yaml + JSONL manifest` 描述路径、标签、说话人、
   数据划分和音频片段。
-- 数据导入与检查：支持 Folder、CSV、JSONL、CASIA 和 RAVDESS，提供扫描、转换、
-  校验、统计和音频属性分析。
+- 数据导入与检查：支持 Folder、CSV、JSONL、CASIA、RAVDESS、CSEMOTIONS、ESD、
+  CREMA-D 和 EmotionTalk，提供扫描、转换、校验、统计和音频属性分析。
 - 可扩展组件体系：Importer、Representation、Transform 和 Model 均可通过注册表
   扩展，并在运行前检查输入布局、特征维度、类别数和批处理兼容性。
 - 内置模型：提供 CNN、GRU/BiGRU 和轻量 Transformer 分类基线；可选接入
   Hugging Face 语音编码器。
 - 训练与评估：支持确定性随机种子、CPU/单 GPU、AMP、梯度累积、梯度裁剪、
-  学习率调度、断点续训和结构化事件。
-- SER 指标：支持 loss、accuracy/WAR、UAR、macro-F1、逐类指标、混淆矩阵和
-  样本级概率报告。
+  学习率调度、断点续训、类别权重、focal loss、平衡采样和逐 epoch 日志。
+- SER 指标：支持 loss、accuracy/WAR、UAR、macro/weighted-F1、weighted
+  precision/recall、balanced accuracy、MCC、Cohen's kappa、逐类指标、混淆矩阵
+  和样本级概率报告。
 - 安全模型产物：artifact v2 使用 `safetensors`，保存模型、数据配置、标签、指标、
   模型卡和校验和；训练 checkpoint 与分发 artifact 明确分离。
 - 完整推理链路：支持单文件、目录、文件列表、manifest 批量推理，以及纯 PCM
@@ -38,15 +39,19 @@
 | 模块 | 当前能力 | 状态 |
 |---|---|---|
 | 数据管线 | Manifest、音频加载、表示、增强、缓存、动态/定长/滑窗批处理 | 稳定 |
-| 数据导入 | Folder、CSV、JSONL、CASIA、RAVDESS | 稳定 |
+| 数据导入 | Folder、CSV、JSONL、CASIA、RAVDESS、CSEMOTIONS、ESD、CREMA-D、EmotionTalk | 稳定 |
 | 模型 | CNN、GRU/BiGRU、轻量 Transformer | 稳定基线 |
 | 预训练模型 | Hugging Face 音频分类适配器 | 可选依赖，首轮实现 |
-| 训练 | CPU/单 GPU、AMP、梯度累积、调度器、checkpoint 恢复 | 稳定 |
+| 训练 | CPU/单 GPU、AMP、类别权重/focal loss、平衡采样、验证、early stopping、训练日志 | 稳定 |
 | 评估 | 常用 SER 分类指标和 JSON/JSONL 报告 | 稳定 |
 | Artifact | safetensors、完整性校验、模型卡、可移植恢复 | 稳定 |
 | 推理 | 单文件、批量和纯 PCM 流式推理 | 稳定核心 |
 | CLI | dataset/train/evaluate/predict/artifact 命令 | 稳定核心 |
 | 教程 | 0–7 章课程结构 | 提纲，尚不可执行 |
+
+当前完整自动化测试基线为 `151 passed`。此外已在 RTX 4060 上使用真实 EmotionTalk
+数据完成 3 epoch 训练、最佳 checkpoint 导出和独立测试集评估，证明混合采样率、
+单双声道数据可贯通训练与 artifact 工作流；该短训结果仅用于工程验收，不代表正式基准。
 
 “稳定”表示已有自动化测试覆盖的基础闭环，并不表示 API 已承诺永久不变。
 在 1.0.0 之前，公共接口仍可能按照语义化版本规则调整。
@@ -106,16 +111,20 @@ ser dataset scan --importer folder --source "path/to/audio"
 ser dataset import --importer folder --source "path/to/audio" --destination "data/standard"
 ser dataset validate "data/standard/dataset.yaml" --check-files
 ser dataset stats "data/standard/dataset.yaml" --probe-audio
-ser train "configs/experiment.yaml" --split train --batch-size 16
+ser train "configs/cnn_logmel.yaml" --split train --batch-size 16
 ```
+
+仓库提供了可直接修改的 CNN、GRU 和 Transformer 配置模板，参见
+[`configs/README.md`](configs/README.md)。Python API 示例位于
+[`examples/`](examples/README.md)。
 
 训练 checkpoint 只用于从可信的本地训练状态继续执行。需要发布或推理时，应先
 导出为安全 artifact：
 
 ```bash
 ser artifact export \
-  --config "configs/experiment.yaml" \
-  --checkpoint "runs/checkpoints/epoch-0010.pt" \
+  --config "configs/cnn_logmel.yaml" \
+  --checkpoint "runs/cnn-logmel/checkpoints/best.pt" \
   --destination "artifacts/model"
 ser artifact verify "artifacts/model" --json
 ```
@@ -194,9 +203,9 @@ Representation 转换为带有明确 `TensorSpec` 的输入，再由模型通过
 以下内容尚不能作为已发布能力使用：
 
 - 将 0–7 章 Notebook 从课程提纲补齐为可执行、可由 CI 验证的教程。
-- 增加 early stopping、best/last checkpoint 策略、类别权重和平衡采样。
+- 增加更完整的损失函数插件协议，以及面向连续情感维度的回归损失。
 - 建立 CPU/GPU 冷启动、吞吐、峰值内存和长时间流式运行的正式性能基线。
-- 增加更多许可证允许公开适配的 SER 数据集 importer，并进行超大 manifest 压测。
+- 完成 IEMOCAP、MELD 等复杂会话型数据集 importer，并进行超大 manifest 压测。
 - 完善第三方模型适配协议、多任务 valence/arousal 输出和更多受控模型族。
 - 提供 artifact schema 迁移工具，以及按需求评估 ONNX 等独立导出格式。
 - 补充发布自动化、macOS 真实运行验证和更严格的分模块覆盖率门禁。
@@ -217,6 +226,8 @@ Speech-Emotion-Recognition/
 │   ├── inference/        # 单文件、批量和流式推理
 │   └── cli/              # ser 命令行入口
 ├── scripts/              # 覆盖率和训练冒烟脚本
+├── configs/              # 可校验的训练配置模板
+├── examples/             # 可执行 Python API 示例
 ├── benchmarks/           # 数据流水线性能基准
 ├── tests/                # 自动化测试
 ├── tutorials/            # 课程 Notebook（当前为提纲）
